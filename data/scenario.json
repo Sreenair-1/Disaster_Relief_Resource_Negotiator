@@ -1,0 +1,10 @@
+{
+  "disaster_type": "flood",
+  "zones": [
+    {"name": "Zone A", "population": 500, "stranded": 300, "critical_patients": 0, "road_access": 0.5},
+    {"name": "Zone B", "population": 120, "stranded": 12, "critical_patients": 12, "road_access": 0.3}
+  ],
+  "resources": {"boats": 3},
+  "hospitals": ["Regional Hospital"],
+  "roads": {"Zone A": "blocked", "Zone B": "flooded"}
+}
