@@ -4,7 +4,8 @@
 
 ```mermaid
 flowchart TD
-  UI[Streamlit control room<br/>planned] --> G[LangGraph orchestrator<br/>planned]
+  UI[Streamlit control room] --> R[ui.runner boundary<br/>placeholder]
+  R --> G[LangGraph orchestrator<br/>planned]
   G --> S[Scenario agent<br/>stub]
   G --> M[Medical agent<br/>stub]
   G --> H[Shelter agent<br/>stub]
@@ -36,4 +37,13 @@ Orchestrator-worker with bounded negotiation loop.
 
 Inputs are `Scenario` and optional scenario events. Workers emit `Claim` or
 `Estimate`; the mediator emits `MediatorAction` and `Plan`. `NegotiationState`
-holds the complete loop state. LangGraph and Streamlit integration are planned.
+holds the complete loop state.
+
+## UI
+
+`app.py` provides a Streamlit control room with a JSON scenario loader/editor
+validated by the `Scenario` Pydantic model, a Run action, transcript rendering
+from `Tracer` events, allocation and justification rows, event injection
+presets plus free text, failure injection, and JSONL trace download. `ui/runner.py`
+is the narrow replacement point for the graph: its current deterministic
+placeholder records scenario and event messages but does not create a plan.
