@@ -3,8 +3,8 @@
 from pathlib import Path
 from typing import Any
 
+from agents._common import gather_tool_telemetry, handle_tool_failure
 from lib.schemas import Claim, Counter, Estimate, NegotiationState
-from lib.toolcall import call_tool
 from lib.tracing import Tracer
 
 _PROMPT_PATH = Path(__file__).parent / "prompts" / "logistics.md"
@@ -21,33 +21,11 @@ def _system_prompt() -> str:
 
 def _gather_tool_data(
     state: NegotiationState, tracer: Tracer
-) -> tuple[dict[str, Any], bool]:
-    """Call road_status, vehicle_inventory, and stock_levels; return merged data and tool_failed flag."""
-    data: dict[str, Any] = {}
-    tool_failed = False
-
-    road_res = call_tool("road_status", state.scenario, tracer)
-    if road_res.ok:
-        data["road_status"] = road_res.data
-    else:
-        tool_failed = True
-        data["road_status_error"] = road_res.error
-
-    veh_res = call_tool("vehicle_inventory", state.scenario, tracer)
-    if veh_res.ok:
-        data["vehicle_inventory"] = veh_res.data
-    else:
-        tool_failed = True
-        data["vehicle_inventory_error"] = veh_res.error
-
-    stock_res = call_tool("stock_levels", state.scenario, tracer)
-    if stock_res.ok:
-        data["stock_levels"] = stock_res.data
-    else:
-        tool_failed = True
-        data["stock_levels_error"] = stock_res.error
-
-    return data, tool_failed
+) -> tuple[dict[str, Any], bool, list[str]]:
+    """Call road_status, vehicle_inventory, and stock_levels via shared telemetry gatherer."""
+    return gather_tool_telemetry(
+        state.scenario, ["road_status", "vehicle_inventory", "stock_levels"], tracer
+    )
 
 
 def _get_blocked_routes(state: NegotiationState, tool_data: dict[str, Any]) -> list[str]:
@@ -175,7 +153,7 @@ def make_claim(
         },
     )
 
-    tool_data, tool_failed = _gather_tool_data(state, tracer)
+    tool_data, tool_failed, failed_tools = _gather_tool_data(state, tracer)
     blocked_routes = _get_blocked_routes(state, tool_data)
 
     user_msg = _build_user_message(state, tool_data, tool_failed, counter, blocked_routes)
@@ -198,9 +176,8 @@ def make_claim(
     if claim.agent != "logistics":
         claim = claim.model_copy(update={"agent": "logistics"})
 
-    # If tools failed and the LLM didn't set uncertainty, apply a default
-    if tool_failed and claim.uncertainty is None:
-        claim = claim.model_copy(update={"uncertainty": 0.5})
+    # Handle tool failure: state uncertainty explicitly and offer fallback_estimate
+    claim = handle_tool_failure(claim, "logistics", state.scenario, tool_failed, failed_tools)
 
     # Ensure cut/blocked routes are explicitly noted in justification for Mediator scoring
     if blocked_routes and not any(r.lower() in claim.justification.lower() for r in blocked_routes):
@@ -230,7 +207,7 @@ def estimate(
     """
     tracer.log("logistics", "llm", "estimate_request", {"question": question})
 
-    tool_data, tool_failed = _gather_tool_data(state, tracer)
+    tool_data, tool_failed, _ = _gather_tool_data(state, tracer)
     blocked_routes = _get_blocked_routes(state, tool_data)
 
     system_msg = _system_prompt()

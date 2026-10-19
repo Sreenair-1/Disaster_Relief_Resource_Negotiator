@@ -3,9 +3,9 @@
 from pathlib import Path
 from typing import Any
 
+from agents._common import gather_tool_telemetry, handle_tool_failure
 from lib.llm import StubLLM
 from lib.schemas import Claim, Counter, Estimate, NegotiationState
-from lib.toolcall import call_tool
 from lib.tracing import Tracer
 
 _PROMPT_PATH = Path(__file__).parent / "prompts" / "medical.md"
@@ -22,26 +22,11 @@ def _system_prompt() -> str:
 
 def _gather_tool_data(
     state: NegotiationState, tracer: Tracer
-) -> tuple[dict[str, Any], bool]:
-    """Call hospital_capacity and casualty_estimate, return merged data and tool_failed flag."""
-    data: dict[str, Any] = {}
-    tool_failed = False
-
-    hosp_result = call_tool("hospital_capacity", state.scenario, tracer)
-    if hosp_result.ok:
-        data["hospital_capacity"] = hosp_result.data
-    else:
-        tool_failed = True
-        data["hospital_capacity_error"] = hosp_result.error
-
-    cas_result = call_tool("casualty_estimate", state.scenario, tracer)
-    if cas_result.ok:
-        data["casualty_estimate"] = cas_result.data
-    else:
-        tool_failed = True
-        data["casualty_estimate_error"] = cas_result.error
-
-    return data, tool_failed
+) -> tuple[dict[str, Any], bool, list[str]]:
+    """Call hospital_capacity and casualty_estimate via shared telemetry gatherer."""
+    return gather_tool_telemetry(
+        state.scenario, ["hospital_capacity", "casualty_estimate"], tracer
+    )
 
 
 def _build_user_message(
@@ -127,7 +112,7 @@ def make_claim(
     """
     tracer.log("medical", "tools", "gather_data", {"counter": counter.model_dump() if counter else None})
 
-    tool_data, tool_failed = _gather_tool_data(state, tracer)
+    tool_data, tool_failed, failed_tools = _gather_tool_data(state, tracer)
 
     user_msg = _build_user_message(state, tool_data, tool_failed, counter)
     system_msg = _system_prompt()
@@ -140,9 +125,8 @@ def make_claim(
     if claim.agent != "medical":
         claim = claim.model_copy(update={"agent": "medical"})
 
-    # If tools failed and the LLM didn't set uncertainty, apply a default
-    if tool_failed and claim.uncertainty is None:
-        claim = claim.model_copy(update={"uncertainty": 0.5})
+    # Handle tool failure: state uncertainty explicitly and offer fallback_estimate
+    claim = handle_tool_failure(claim, "medical", state.scenario, tool_failed, failed_tools)
 
     tracer.log("medical", "mediator", "claim", claim.model_dump())
     return claim
@@ -168,7 +152,7 @@ def estimate(
     tracer.log("medical", "llm", "estimate_request", {"question": question})
 
     # Gather fresh tool data for the estimate
-    tool_data, tool_failed = _gather_tool_data(state, tracer)
+    tool_data, tool_failed, _ = _gather_tool_data(state, tracer)
 
     system_msg = _system_prompt()
     user_parts = [
