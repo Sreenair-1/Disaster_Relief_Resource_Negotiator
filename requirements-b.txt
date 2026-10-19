@@ -1,0 +1,2 @@
+# Agent B dependencies
+# Pure-Python scenario data tools and failure injection rely solely on the standard library and pydantic (already in base requirements).

@@ -1,0 +1,47 @@
+{
+  "disaster_type": "monsoon_flood",
+  "zones": [
+    {
+      "name": "Silchar Urban",
+      "population": 18000,
+      "stranded": 4200,
+      "critical_patients": 140,
+      "road_access": 0.4
+    },
+    {
+      "name": "Lakhipur Sub-Division",
+      "population": 12000,
+      "stranded": 3100,
+      "critical_patients": 75,
+      "road_access": 0.2
+    },
+    {
+      "name": "Sonai River Corridor",
+      "population": 9500,
+      "stranded": 2800,
+      "critical_patients": 60,
+      "road_access": 0.1
+    },
+    {
+      "name": "Katigorah Border Plain",
+      "population": 14000,
+      "stranded": 5500,
+      "critical_patients": 90,
+      "road_access": 0.0
+    }
+  ],
+  "resources": {
+    "boats": 12,
+    "trucks": 8
+  },
+  "hospitals": [
+    "Silchar Medical College Hospital",
+    "Lakhipur Civil Hospital"
+  ],
+  "roads": {
+    "Silchar Urban": "flooded",
+    "Lakhipur Sub-Division": "blocked",
+    "Sonai River Corridor": "submerged",
+    "Katigorah Border Plain": "cut_off"
+  }
+}

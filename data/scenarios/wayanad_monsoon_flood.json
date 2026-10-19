@@ -1,0 +1,47 @@
+{
+  "disaster_type": "monsoon_flood",
+  "zones": [
+    {
+      "name": "Meppadi Valley",
+      "population": 8500,
+      "stranded": 2200,
+      "critical_patients": 95,
+      "road_access": 0.1
+    },
+    {
+      "name": "Vythiri High Range",
+      "population": 11000,
+      "stranded": 1800,
+      "critical_patients": 45,
+      "road_access": 0.3
+    },
+    {
+      "name": "Mananthavady Riverine",
+      "population": 14500,
+      "stranded": 3600,
+      "critical_patients": 80,
+      "road_access": 0.4
+    },
+    {
+      "name": "Sulthan Bathery Lowland",
+      "population": 16000,
+      "stranded": 2900,
+      "critical_patients": 50,
+      "road_access": 0.6
+    }
+  ],
+  "resources": {
+    "boats": 10,
+    "trucks": 14
+  },
+  "hospitals": [
+    "Wayanad District Hospital Mananthavady",
+    "Sulthan Bathery Taluk Headquarters Hospital"
+  ],
+  "roads": {
+    "Meppadi Valley": "blocked",
+    "Vythiri High Range": "landslide",
+    "Mananthavady Riverine": "flooded",
+    "Sulthan Bathery Lowland": "partially_open"
+  }
+}
