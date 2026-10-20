@@ -60,13 +60,18 @@ def decide_next(state: NegotiationState, llm, tracer: Tracer) -> MediatorAction:
         decision = llm.complete_json(
             _system_prompt(),
             "Choose the next action based on this negotiation state. Return JSON with "
-            "action and, for challenge_agent or request_fallback, to_agent and question. "
+            "action and, for challenge_agent, request_fallback, or ask_peer_estimate, "
+            "to_agent and question. "
             "Include concise reasoning.\n" + json.dumps(context),
             _Decision,
         )
 
     counter = None
-    if decision.action in {MediatorAction.challenge_agent, MediatorAction.request_fallback}:
+    if decision.action in {
+        MediatorAction.challenge_agent,
+        MediatorAction.request_fallback,
+        MediatorAction.ask_peer_estimate,
+    }:
         agent = decision.to_agent or _counter_target(state, deficits, missing, uncertain)
         question = decision.question or _counter_question(agent, decision.action, deficits)
         counter = Counter(to_agent=agent, question=question)
@@ -98,6 +103,8 @@ def _counter_target(state, deficits, missing, uncertain) -> str:
 
 
 def _counter_question(agent, action, deficits) -> str:
+    if action == MediatorAction.ask_peer_estimate:
+        return f"Please provide an independent estimate relevant to {agent}'s uncertain claim."
     if action == MediatorAction.request_fallback:
         return f"Please propose a fallback that uses fewer resources than your current {agent} claim."
     if deficits:

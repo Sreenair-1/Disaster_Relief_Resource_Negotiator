@@ -51,6 +51,19 @@ def test_round_three_forces_finalize_without_llm(sample_scenario):
     assert tracer.events[-1]["payload"]["round"] == 3
 
 
+def test_peer_estimate_decision_emits_targeted_counter(sample_scenario):
+    tracer = MemoryTracer()
+    state = _state(sample_scenario)
+    llm = StubLLM([{
+        "action": "ask_peer_estimate", "to_agent": "logistics",
+        "question": "Estimate access to Zone B.", "reasoning": "Medical telemetry is uncertain.",
+    }])
+
+    assert decide_next(state, llm, tracer) == MediatorAction.ask_peer_estimate
+    assert state.counters[-1].to_agent == "logistics"
+    assert state.counters[-1].question == "Estimate access to Zone B."
+
+
 def test_finalize_caps_inventory_and_seed_split(sample_scenario):
     tracer = MemoryTracer()
     state = _state(sample_scenario, round=2)

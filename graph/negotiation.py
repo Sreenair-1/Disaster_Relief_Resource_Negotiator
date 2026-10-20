@@ -42,8 +42,12 @@ def _mediate(ctx: _GraphState) -> _GraphState:
     uncertain = [claim for claim in state.claims if claim.uncertainty is None or claim.uncertainty > 0]
     if action == MediatorAction.accept_revision and uncertain and state.round < 3:
         action = MediatorAction.ask_peer_estimate
-        target = max(uncertain, key=lambda claim: claim.uncertainty or 1).agent
-        state.counters.append(Counter(to_agent=target, question="Please provide an independent estimate to address claim uncertainty."))
+        uncertain_agent = max(uncertain, key=lambda claim: claim.uncertainty or 1).agent
+        peer = {"medical": "logistics", "shelter": "medical", "logistics": "shelter"}.get(uncertain_agent, "logistics")
+        state.counters.append(Counter(
+            to_agent=peer,
+            question=f"Please provide an independent estimate relevant to {uncertain_agent}'s uncertain claim.",
+        ))
     target = state.counters[-1].to_agent if state.counters else None
     return {**ctx, "action": action, "next_agent": target}
 

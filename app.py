@@ -1,6 +1,7 @@
 """Streamlit control room for a disaster relief negotiation."""
 
 from pathlib import Path
+import os
 
 import streamlit as st
 
@@ -8,6 +9,31 @@ from lib.schemas import Scenario
 from ui.runner import inject_event, run_negotiation
 
 DEFAULT_SCENARIO_PATH = Path(__file__).parent / "data" / "scenario.json"
+RUNTIME_KEYS = ("OPENAI_API_KEY", "OPENAI_BASE_URL", "OPENAI_MODEL")
+
+
+def configure_llm_environment() -> None:
+    """Load local .env values or Streamlit secrets without overriding process env."""
+    env_file = Path(__file__).parent / ".env"
+    if env_file.is_file():
+        for line in env_file.read_text(encoding="utf-8").splitlines():
+            line = line.strip()
+            if not line or line.startswith("#") or "=" not in line:
+                continue
+            key, value = line.split("=", 1)
+            key, value = key.strip(), value.strip().strip("\"'")
+            if key in RUNTIME_KEYS and value and not os.environ.get(key):
+                os.environ[key] = value
+
+    for key in RUNTIME_KEYS:
+        if os.environ.get(key):
+            continue
+        try:
+            value = st.secrets.get(key)
+        except Exception:
+            value = None
+        if value:
+            os.environ[key] = str(value)
 
 
 def scenario_json() -> str:
@@ -17,6 +43,7 @@ def scenario_json() -> str:
 
 
 def main() -> None:
+    configure_llm_environment()
     st.set_page_config(page_title="Relief Negotiator", layout="wide")
     st.title("Disaster Relief Resource Negotiator")
     st.caption("Scenario control room · multi-agent negotiation and event replanning")

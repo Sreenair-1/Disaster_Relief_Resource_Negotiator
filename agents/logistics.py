@@ -210,7 +210,12 @@ def estimate(
     tool_data, tool_failed, _ = _gather_tool_data(state, tracer)
     blocked_routes = _get_blocked_routes(state, tool_data)
 
-    system_msg = _system_prompt()
+    system_msg = (
+        f"{_system_prompt()}\n\n"
+        "This is an estimate request, not a resource claim. Override the Claim output "
+        "instructions above and return ONLY JSON matching Estimate: agent, question, "
+        "value, confidence, and rationale."
+    )
     user_parts = [
         f"A peer agent or the mediator asks: \"{question}\"",
         f"Disaster type: {state.scenario.disaster_type}",
