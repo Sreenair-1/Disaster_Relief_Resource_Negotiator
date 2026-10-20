@@ -19,7 +19,7 @@ def scenario_json() -> str:
 def main() -> None:
     st.set_page_config(page_title="Relief Negotiator", layout="wide")
     st.title("Disaster Relief Resource Negotiator")
-    st.caption("Scenario control room · negotiation runner is a replaceable placeholder")
+    st.caption("Scenario control room · multi-agent negotiation and event replanning")
 
     with st.sidebar:
         st.header("Scenario")
@@ -52,10 +52,16 @@ def main() -> None:
             event_text = "Weather conditions have worsened."
         if cols[1].button("Inject event", disabled=not event_text.strip()):
             if valid_scenario is not None:
-                result = inject_event(valid_scenario, event_text.strip())
-                st.session_state.trace_events = result["events"]
-                st.session_state.run_result = result
-                st.session_state.event_text = ""
+                previous = st.session_state.get("run_result") or {}
+                previous_state = previous.get("state")
+                if previous_state is None:
+                    st.session_state.event_error = "Run the scenario successfully before injecting an event."
+                else:
+                    result = inject_event(previous_state, event_text.strip())
+                    result["events"] = [*previous.get("events", []), *result["events"]]
+                    st.session_state.trace_events = result["events"]
+                    st.session_state.run_result = result
+                    st.session_state.event_text = ""
 
         try:
             from tools.failure import set_failure
@@ -77,12 +83,30 @@ def main() -> None:
     left, right = st.columns([1, 1])
     with left:
         st.subheader("Negotiation transcript")
+        result = st.session_state.get("run_result") or {}
+        if result.get("error"):
+            st.error(result["error"])
+        for warning in result.get("warnings", []):
+            st.warning(f"Some relief data was unavailable: {warning}")
+        if st.session_state.get("event_error"):
+            st.error(st.session_state.pop("event_error"))
         events = st.session_state.get("trace_events", [])
         if events:
             for event in events:
-                with st.chat_message("assistant" if event.get("sender") in {"mediator", "system"} else "user"):
-                    st.markdown(f"**{event.get('sender', 'system')} → {event.get('receiver', 'all')}** · {event.get('type', 'event')}")
-                    st.json(event.get("payload", {}))
+                sender = event.get("sender", "system")
+                colors = {"medical": "red", "shelter": "green", "logistics": "blue",
+                          "mediator": "violet", "scenario": "orange", "toolcall": "gray"}
+                with st.chat_message("assistant" if sender in {"mediator", "system"} else "user"):
+                    st.markdown(f":{colors.get(sender, 'gray')}[**{sender}**] → **{event.get('receiver', 'all')}** · {event.get('type', 'event')}")
+                    payload = event.get("payload", {})
+                    badges = []
+                    if event.get("type") in {"tool_requested", "tool_result"}:
+                        badges.append("🛠️ Tool call")
+                    if isinstance(payload, dict) and payload.get("counter"):
+                        badges.append("✉️ Counter request")
+                    if badges:
+                        st.caption(" · ".join(badges))
+                    st.json(payload)
         else:
             st.info("Run a scenario to see tracer events here.")
     with right:
@@ -90,6 +114,24 @@ def main() -> None:
         result = st.session_state.get("run_result")
         plan = result.get("plan") if result else None
         if plan and plan.get("allocation"):
+            before = result.get("before_plan")
+            if before and before.get("allocation"):
+                st.markdown("**First run → replan**")
+                before_alloc, after_alloc = before["allocation"], plan["allocation"]
+                compare_rows = []
+                for agent in sorted(set(before_alloc) | set(after_alloc)):
+                    resources = set(before_alloc.get(agent, {})) | set(after_alloc.get(agent, {}))
+                    for resource in sorted(resources):
+                        old = before_alloc.get(agent, {}).get(resource, 0)
+                        new = after_alloc.get(agent, {}).get(resource, 0)
+                        compare_rows.append({"Agent": agent, "Resource": resource, "Before": old,
+                                             "After": new, "Change": new - old,
+                                             "Reason": plan.get("justifications", {}).get(agent, "Updated after scenario event.")})
+                st.dataframe(compare_rows, use_container_width=True, hide_index=True)
+            counts = st.columns(3)
+            counts.metric("Rounds", plan.get("rounds_used", 0))
+            counts.metric("Conflicts", len(plan.get("conflicts_resolved", [])))
+            counts.metric("Replans", plan.get("replans", 0))
             rows = []
             for agent, resources in plan["allocation"].items():
                 for resource, amount in resources.items():
@@ -97,7 +139,8 @@ def main() -> None:
                                  "Justification": plan.get("justifications", {}).get(agent, "")})
             st.dataframe(rows, use_container_width=True, hide_index=True)
         else:
-            st.info("The placeholder runner does not produce an allocation yet.")
+            if not result or not result.get("error"):
+                st.info("Run a scenario to see its allocation.")
 
 
 if __name__ == "__main__":

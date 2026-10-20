@@ -4,7 +4,7 @@
 
 ```mermaid
 flowchart TD
-  UI[Streamlit control room] --> R[ui.runner boundary<br/>placeholder]
+  UI[Streamlit control room] --> R[ui.runner boundary]
   R --> G[LangGraph orchestrator]
   G --> S[Scenario agent<br/>stub]
   G --> M[Medical agent<br/>stub]
@@ -77,8 +77,9 @@ resolved conflicts, and dispute notes but cannot change the allocation.
 ## UI
 
 `app.py` provides a Streamlit control room with a JSON scenario loader/editor
-validated by the `Scenario` Pydantic model, a Run action, transcript rendering
-from `Tracer` events, allocation and justification rows, event injection
-presets plus free text, failure injection, and JSONL trace download. `ui/runner.py`
-is the narrow replacement point for the graph: its current deterministic
-placeholder records scenario and event messages but does not create a plan.
+validated by the `Scenario` Pydantic model, a Run action, colored agent transcript
+with tool/counter badges, allocation and justification rows, event injection,
+before/after allocation comparison, rounds/conflicts/replans counters, failure
+injection, and JSONL trace download. `ui/runner.py` calls the graph APIs, displays
+friendly model/tool failure messages, and explains when `OPENAI_API_KEY` is
+missing. Its optional `llm` argument supports local `StubLLM` workflows.
