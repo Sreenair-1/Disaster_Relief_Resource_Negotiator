@@ -5,20 +5,20 @@
 ```mermaid
 flowchart TD
   UI[Streamlit control room] --> R[ui.runner boundary<br/>placeholder]
-  R --> G[LangGraph orchestrator<br/>planned]
-  G --> S[Scenario agent<br/>event injector & diff validator]
-  G --> M[Medical agent<br/>critical care]
-  G --> H[Shelter agent<br/>evacuation & displaced]
-  G --> L[Logistics agent<br/>routes & resources]
-  M --> X[Mediator agent<br/>conflict resolution]
+  R --> N[graph.negotiation<br/>orchestrator]
+  N --> S[Scenario agent<br/>event injector & diff validator]
+  N --> M[Medical agent<br/>critical care]
+  N --> H[Shelter agent<br/>evacuation & displaced]
+  N --> L[Logistics agent<br/>routes & resources]
+  M --> X[Mediator agent<br/>decision & early finalization]
   H --> X
   L --> X
-  S --> G
-  G --> RP[graph.replan<br/>affected-agent derivation]
-  RP --> G
-  X --> G
-  G --> T[Tracer]
-  G --> O[Plan output]
+  S --> N
+  N --> RP[graph.replan<br/>affected-agent derivation]
+  RP --> N
+  X --> N
+  N --> T[Tracer]
+  N --> O[Plan output]
 ```
 
 ## Pattern
@@ -32,14 +32,22 @@ Orchestrator-worker with bounded negotiation loop.
 | Medical | Prioritize critical patients | Implemented |
 | Shelter | Prioritize stranded residents | Implemented |
 | Logistics | Model transport constraints | Implemented |
-| Mediator | Resolve conflicts and finalize | Stub |
+| Mediator | Resolve conflicts, challenge oversubscriptions, and finalize | Implemented |
 | Scenario | Inject changing conditions & validate state mutations | Implemented |
 
 ## I/O schema
 
 Inputs are `Scenario` and optional scenario events. Workers emit `Claim` or
 `Estimate`; the mediator emits `MediatorAction` and `Plan`. `NegotiationState`
-holds the complete loop state. `ScenarioDiff` models before/after field mutations.
+holds the complete loop state, including `estimates` and `claims`. `ScenarioDiff` models before/after field mutations.
+
+## Negotiation Orchestration & Claim Revisions (`graph/negotiation.py`)
+
+The negotiation loop coordinates dynamic multi-agent compromise:
+- **Estimate Feedback**: Estimates gathered via `request_fallback` or `ask_peer_estimate` are stored in `NegotiationState.estimates` and injected into subsequent Mediator context and need agents' revision prompts.
+- **Oversubscription & Challenges**: When resources are oversubscribed, the Mediator prefers `challenge_agent` targeting the lowest-scoring or highest-demand claimant. The challenged agent re-evaluates its claim with the Counter and feedback.
+- **Claim Revision Tracing**: Revised claims are traced as `claim_revision` events detailing changes in resources, urgency, and time windows. If an agent defends its claim unchanged, its defense justification is recorded.
+- **Early Finalization**: The Mediator finalizes as soon as nothing is oversubscribed or claims stop changing, rather than needlessly consuming rounds. The 3-round cap acts solely as a safety net.
 
 ## Scenario Event Injection & Diff Validation
 

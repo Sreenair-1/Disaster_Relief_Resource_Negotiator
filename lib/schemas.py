@@ -56,6 +56,13 @@ class MediatorAction(str, Enum):
     finalize = "finalize"
 
 
+class MediatorDecision(BaseModel):
+    action: MediatorAction
+    target_agent: str | None = None
+    counter_question: str = ""
+    rationale: str = ""
+
+
 class Plan(BaseModel):
     allocation: dict[str, dict[str, int]] = Field(default_factory=dict)
     justifications: dict[str, str] = Field(default_factory=dict)
@@ -70,6 +77,7 @@ class NegotiationState(BaseModel):
     round: int = 0
     claims: list[Claim] = Field(default_factory=list)
     counters: list[Counter] = Field(default_factory=list)
+    estimates: list[Estimate] = Field(default_factory=list)
     events: list[str] = Field(default_factory=list)
     plan: Plan | None = None
     replans: int = 0
