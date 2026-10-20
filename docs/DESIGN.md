@@ -164,6 +164,7 @@ in-memory events and writes each event as JSONL.
 | OpenAI-compatible JSON client | Typed model output via OpenAI or Groq with retry and JSON repair; same interface for `StubLLM` |
 | Deterministic Python scoring | Reproducible priorities and inventory caps independent of LLM prose |
 | Streamlit | Scenario editing, event injection, transcript, allocation comparison, and downloads |
+| python-dotenv | Load ignored local `.env` settings without overriding process environment values |
 | JSONL Tracer | Auditable, append-only run record suitable for replay and review |
 
 ## Runtime and deployment

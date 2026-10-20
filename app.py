@@ -4,6 +4,7 @@ from pathlib import Path
 import os
 
 import streamlit as st
+from dotenv import load_dotenv
 
 from lib.schemas import Scenario
 from ui.runner import inject_event, run_negotiation
@@ -15,15 +16,7 @@ RUNTIME_KEYS = ("OPENAI_API_KEY", "OPENAI_BASE_URL", "OPENAI_MODEL")
 def configure_llm_environment() -> None:
     """Load local .env values or Streamlit secrets without overriding process env."""
     env_file = Path(__file__).parent / ".env"
-    if env_file.is_file():
-        for line in env_file.read_text(encoding="utf-8").splitlines():
-            line = line.strip()
-            if not line or line.startswith("#") or "=" not in line:
-                continue
-            key, value = line.split("=", 1)
-            key, value = key.strip(), value.strip().strip("\"'")
-            if key in RUNTIME_KEYS and value and not os.environ.get(key):
-                os.environ[key] = value
+    load_dotenv(dotenv_path=env_file, override=False)
 
     for key in RUNTIME_KEYS:
         if os.environ.get(key):
@@ -40,6 +33,50 @@ def scenario_json() -> str:
     if "scenario_json" not in st.session_state:
         st.session_state.scenario_json = DEFAULT_SCENARIO_PATH.read_text(encoding="utf-8")
     return st.session_state.scenario_json
+
+
+def set_event_text(text: str) -> None:
+    """Set the event description before Streamlit reruns the script."""
+    st.session_state.event_text = text
+
+
+def handle_inject_event() -> None:
+    """Inject an event and safely clear the input through a callback."""
+    event_text = st.session_state.get("event_text", "").strip()
+
+    if not event_text:
+        return
+
+    try:
+        raw = st.session_state.get("scenario_json", "")
+        valid_scenario = Scenario.model_validate_json(raw)
+    except Exception:
+        st.session_state.event_error = "Please provide a valid scenario first."
+        return
+
+    previous = st.session_state.get("run_result") or {}
+    previous_state = previous.get("state")
+
+    if previous_state is None:
+        st.session_state.event_error = (
+            "Run the scenario successfully before injecting an event."
+        )
+        return
+
+    try:
+        result = inject_event(previous_state, event_text)
+        result["events"] = [
+            *previous.get("events", []),
+            *result["events"],
+        ]
+        st.session_state.trace_events = result["events"]
+        st.session_state.run_result = result
+
+        # Safe here: this function executes as a widget callback.
+        st.session_state.event_text = ""
+
+    except Exception as exc:
+        st.session_state.event_error = f"Event injection failed: {exc}"
 
 
 def main() -> None:
@@ -69,27 +106,38 @@ def main() -> None:
 
         st.divider()
         st.subheader("Inject an event")
-        event_text = st.text_input("Event description", key="event_text")
-        cols = st.columns(2)
-        if cols[0].button("Road blocked"):
-            event_text = "Road access is blocked."
-        if cols[1].button("New patients"):
-            event_text = "A new group of critical patients has been reported."
-        if cols[0].button("Weather worsened"):
-            event_text = "Weather conditions have worsened."
-        if cols[1].button("Inject event", disabled=not event_text.strip()):
-            if valid_scenario is not None:
-                previous = st.session_state.get("run_result") or {}
-                previous_state = previous.get("state")
-                if previous_state is None:
-                    st.session_state.event_error = "Run the scenario successfully before injecting an event."
-                else:
-                    result = inject_event(previous_state, event_text.strip())
-                    result["events"] = [*previous.get("events", []), *result["events"]]
-                    st.session_state.trace_events = result["events"]
-                    st.session_state.run_result = result
-                    st.session_state.event_text = ""
 
+        st.text_input(
+            "Event description",
+            key="event_text",
+        )
+
+        cols = st.columns(2)
+
+        cols[0].button(
+            "Road blocked",
+            on_click=set_event_text,
+            args=("Road access is blocked.",),
+        )
+
+        cols[1].button(
+            "New patients",
+            on_click=set_event_text,
+            args=("A new group of critical patients has been reported.",),
+        )
+
+        cols[0].button(
+            "Weather worsened",
+            on_click=set_event_text,
+            args=("Weather conditions have worsened.",),
+        )
+
+        cols[1].button(
+            "Inject event",
+            type="primary",
+            disabled=not st.session_state.event_text.strip(),
+            on_click=handle_inject_event,
+        )
         try:
             from tools.failure import set_failure
 
@@ -156,9 +204,9 @@ def main() -> None:
                                              "Reason": plan.get("justifications", {}).get(agent, "Updated after scenario event.")})
                 st.dataframe(compare_rows, use_container_width=True, hide_index=True)
             counts = st.columns(3)
-            counts.metric("Rounds", plan.get("rounds_used", 0))
-            counts.metric("Conflicts", len(plan.get("conflicts_resolved", [])))
-            counts.metric("Replans", plan.get("replans", 0))
+            counts[0].metric("Rounds", plan.get("rounds_used", 0))
+            counts[1].metric("Conflicts", len(plan.get("conflicts_resolved", [])))
+            counts[2].metric("Replans", plan.get("replans", 0))
             rows = []
             for agent, resources in plan["allocation"].items():
                 for resource, amount in resources.items():

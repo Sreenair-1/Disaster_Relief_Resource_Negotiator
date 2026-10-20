@@ -4,3 +4,4 @@ openai==3.35.1
 streamlit==1.61.1
 langgraph==1.2.16
 typing-extensions==4.16.0
+python-dotenv==1.2.4

@@ -21,11 +21,12 @@ python -m pip install -r requirements.txt
 
 Copy `.env.example` to `.env` and set `OPENAI_API_KEY`, or provide those values
 in the process environment. The app reads local `.env` settings and Streamlit
-secrets. The example is configured for Groq's OpenAI compatible API with
-`openai/gpt-oss-120b`; for OpenAI, set `OPENAI_MODEL` to an available model and
-leave `OPENAI_BASE_URL` blank. Never commit a real key. Without one, the UI shows
-a setup message. The graph can also be called with `StubLLM` for deterministic
-development tests.
+secrets; `python-dotenv` loads `.env` values without overriding values already
+in the process environment. The example is configured for Groq's OpenAI
+compatible API with `openai/gpt-oss-120b`; for OpenAI, set `OPENAI_MODEL` to an
+available model and leave `OPENAI_BASE_URL` blank. Never commit a real key.
+Without one, the UI shows a setup message. The graph can also be called with
+`StubLLM` for deterministic development tests.
 
 ## Run
 
