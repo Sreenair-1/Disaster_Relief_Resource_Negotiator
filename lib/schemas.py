@@ -20,6 +20,10 @@ class Scenario(BaseModel):
     roads: dict[str, Any] = Field(default_factory=dict)
 
 
+class ScenarioDiff(BaseModel):
+    changes: dict[str, Any] = Field(default_factory=dict)
+
+
 class Claim(BaseModel):
     agent: str
     resources: dict[str, int] = Field(default_factory=dict)

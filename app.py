@@ -45,17 +45,22 @@ def main() -> None:
         event_text = st.text_input("Event description", key="event_text")
         cols = st.columns(2)
         if cols[0].button("Road blocked"):
-            event_text = "Road access is blocked."
+            event_text = "Bridge to Zone A collapses, cutting all ground road access to Zone A."
         if cols[1].button("New patients"):
-            event_text = "A new group of critical patients has been reported."
+            event_text = "Eight new critical patients arrive in Zone B."
         if cols[0].button("Weather worsened"):
-            event_text = "Weather conditions have worsened."
+            event_text = "Water in Zone A rises sharply, doubling the number of stranded residents."
         if cols[1].button("Inject event", disabled=not event_text.strip()):
             if valid_scenario is not None:
                 result = inject_event(valid_scenario, event_text.strip())
                 st.session_state.trace_events = result["events"]
                 st.session_state.run_result = result
                 st.session_state.event_text = ""
+
+        for ev in reversed(st.session_state.get("trace_events", [])):
+            if ev.get("type") == "event_rejected":
+                st.warning(f"Event rejected: {ev.get('payload', {}).get('reason', 'event had no effect on the scenario')}")
+                break
 
         try:
             from tools.failure import set_failure
