@@ -226,7 +226,12 @@ def estimate(
 
     tool_data, tool_failed, _ = _gather_tool_data(state, tracer)
 
-    system_msg = _system_prompt()
+    system_msg = (
+        f"{_system_prompt()}\n\n"
+        "This is an estimate request, not a resource claim. Override the Claim output "
+        "instructions above and return ONLY JSON matching Estimate: agent, question, "
+        "value, confidence, and rationale."
+    )
     user_parts = [
         f"A peer or the mediator asks: \"{question}\"",
         f"Disaster type: {state.scenario.disaster_type}",
