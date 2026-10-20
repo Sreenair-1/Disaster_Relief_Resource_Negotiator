@@ -187,6 +187,80 @@ def _resource_awards(claims, resource, inventory, scores, order):
     return awards
 
 
+def _missing_justifications(reasoning, agents):
+    boilerplate = "allocated according to deterministic priority and available inventory."
+    return [
+        agent for agent in agents
+        if not reasoning.justifications.get(agent, "").strip()
+        or boilerplate.rstrip(".") in reasoning.justifications[agent].strip().casefold()
+    ]
+
+
+def _resource_text(resources):
+    if not resources:
+        return "none"
+    return ", ".join(f"{name}={amount}" for name, amount in sorted(resources.items()))
+
+
+def _plan_reasoning_context(state, claims, allocation, scores):
+    rank = {claim.agent: index for index, claim in enumerate(claims, start=1)}
+    requested = {claim.agent: claim.resources for claim in claims}
+    awarded = {
+        claim.agent: {
+            resource: allocation.get(claim.agent, {}).get(resource, 0)
+            for resource in claim.resources
+        }
+        for claim in claims
+    }
+    shortfalls = {
+        claim.agent: {
+            resource: max(0, amount - awarded[claim.agent].get(resource, 0))
+            for resource, amount in claim.resources.items()
+        }
+        for claim in claims
+    }
+    competitors = {
+        claim.agent: [
+            {"agent": other.agent, "score": round(scores[other.agent], 3)}
+            for other in claims if other.agent != claim.agent
+        ]
+        for claim in claims
+    }
+    return {
+        "allocation": allocation,
+        "claims": [claim.model_dump() for claim in state.claims],
+        "scores": {agent: round(score, 3) for agent, score in scores.items()},
+        "rank": rank,
+        "requested": requested,
+        "awarded": awarded,
+        "shortfalls": shortfalls,
+        "competing_claims": competitors,
+        "unmet_resource_amounts": over_subscribed(state.claims, state.scenario),
+        "rounds_used": state.round,
+    }
+
+
+def _deterministic_justification(claim, allocation, scores, rank, competitors):
+    requested = claim.resources
+    awarded = {
+        resource: allocation.get(claim.agent, {}).get(resource, 0)
+        for resource in requested
+    }
+    shortfalls = {
+        resource: max(0, amount - awarded.get(resource, 0))
+        for resource, amount in requested.items()
+    }
+    competitor_text = "; ".join(
+        f"{agent} (score {score:.3f})" for agent, score in competitors
+    ) or "no other claims"
+    return (
+        f"Score {scores[claim.agent]:.3f}; rank {rank}. "
+        f"Requested {_resource_text(requested)}; awarded {_resource_text(awarded)}; "
+        f"shortfall {_resource_text(shortfalls)}. Trade-off: this award balances "
+        f"{claim.agent}'s need against competing claims from {competitor_text}."
+    )
+
+
 def finalize(state: NegotiationState, llm, tracer: Tracer) -> Plan:
     """Allocate by shared claim scores within inventory, then explain."""
     allocation: dict[str, dict[str, int]] = {}
@@ -208,34 +282,64 @@ def finalize(state: NegotiationState, llm, tracer: Tracer) -> Plan:
             if amount:
                 allocation[agent][resource] = amount
 
-    deficits = over_subscribed(state.claims, state.scenario)
-    reasoning = llm.complete_json(
-        _system_prompt(),
-        "Write concise allocation justifications and record resolved conflicts and "
-        "unmet requests as disputes. Do not alter this allocation.\n" +
-        json.dumps({
-            "allocation": allocation,
-            "claims": [claim.model_dump() for claim in state.claims],
-            "scores": {claim.agent: round(score_claim(claim, state.scenario), 3) for claim in state.claims},
-            "unmet_resource_amounts": deficits,
-            "rounds_used": state.round,
-        }),
-        _PlanReasoning,
+    context = _plan_reasoning_context(state, claims, allocation, scores)
+    prompt = _system_prompt()
+    user = (
+        "Explain this fixed allocation. Return one non-empty justification for every "
+        "agent in allocation. Each must cite its numeric score, rank, requested and "
+        "awarded amounts, shortfall, and the trade-off against competing claims. "
+        "Record resolved conflicts and unmet requests. Do not change the allocation.\n"
+        + json.dumps(context)
     )
-    justifications = {
-        agent: reasoning.justifications.get(agent, "Allocated according to deterministic priority and available inventory.")
-        for agent in allocation
+    reasoning = llm.complete_json(prompt, user, _PlanReasoning)
+    missing = _missing_justifications(reasoning, allocation)
+    if missing:
+        retry_user = (
+            "Retry the allocation explanation. These entries were missing or empty: "
+            f"{missing}. Return a non-empty justification for every agent, including "
+            "numeric score, rank, requested and awarded amounts, shortfall, and the "
+            "trade-off against competing claims. Do not change the allocation.\n"
+            + json.dumps(context)
+        )
+        reasoning = llm.complete_json(prompt, retry_user, _PlanReasoning)
+
+    ranks = {claim.agent: index for index, claim in enumerate(claims, start=1)}
+    competitors = {
+        claim.agent: [
+            (other.agent, scores[other.agent])
+            for other in claims if other.agent != claim.agent
+        ]
+        for claim in claims
     }
-    disputes = list(reasoning.disputes_log)
-    for claim in state.claims:
-        shortfalls = {
+    justifications = {}
+    for claim in claims:
+        note = reasoning.justifications.get(claim.agent, "").strip()
+        if "allocated according to deterministic priority and available inventory" in note.casefold():
+            note = ""
+        detail = _deterministic_justification(
+            claim, allocation, scores, ranks[claim.agent], competitors[claim.agent]
+        )
+        justifications[claim.agent] = f"{note} {detail}".strip()
+
+    shortfalls_by_agent = {
+        claim.agent: {
             resource: requested - allocation.get(claim.agent, {}).get(resource, 0)
             for resource, requested in claim.resources.items()
             if requested > allocation.get(claim.agent, {}).get(resource, 0)
         }
-        if shortfalls:
+        for claim in state.claims
+    }
+    reduced_agents = {agent for agent, shortfalls in shortfalls_by_agent.items() if shortfalls}
+    disputes = [
+        dispute for dispute in reasoning.disputes_log
+        if not any(agent.casefold() in dispute.casefold() for agent in reduced_agents)
+    ]
+    for claim in state.claims:
+        shortfalls = shortfalls_by_agent[claim.agent]
+        if shortfalls and not any(claim.agent.casefold() in item.casefold() for item in disputes):
             disputes.append(f"{claim.agent} request was reduced: {shortfalls}.")
     conflicts = list(reasoning.conflicts_resolved)
+    deficits = over_subscribed(state.claims, state.scenario)
     if deficits and not conflicts:
         conflicts.append("Shared resource demand exceeded inventory; awards were capped to available stock.")
 

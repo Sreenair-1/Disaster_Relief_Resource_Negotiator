@@ -29,6 +29,14 @@ def _state(sample_scenario, round=0):
     )
 
 
+def _complete_reasoning(state):
+    return {
+        "justifications": {claim.agent: "Evidence-based trade-off." for claim in state.claims},
+        "conflicts_resolved": [],
+        "disputes_log": [],
+    }
+
+
 def test_decision_varies_with_state_and_emits_counter(sample_scenario):
     tracer = MemoryTracer()
     first, second = _state(sample_scenario), _state(sample_scenario, round=2)
@@ -94,7 +102,7 @@ def test_tied_score_uses_urgency_before_agent_name(sample_scenario):
             _claim("zeta", {"boats": 1}, 50, 10, 5, uncertainty=0),
         ],
     )
-    llm = StubLLM([{"justifications": {}, "conflicts_resolved": [], "disputes_log": []}])
+    llm = StubLLM([_complete_reasoning(state)])
 
     plan = finalize(state, llm, MemoryTracer())
 
@@ -119,7 +127,7 @@ def test_seed_three_boats_gives_medical_a_boat():
             _claim("logistics", {"boats": 3}, 312, 9, 12, uncertainty=0),
         ],
     )
-    llm = StubLLM([{"justifications": {}, "conflicts_resolved": [], "disputes_log": []}])
+    llm = StubLLM([_complete_reasoning(state)])
 
     plan = finalize(state, llm, MemoryTracer())
 
@@ -137,7 +145,7 @@ def test_allocation_respects_inventory_and_each_request(sample_scenario):
             _claim("logistics", {"trucks": 5}, 300, 7, 12, uncertainty=0),
         ],
     )
-    llm = StubLLM([{"justifications": {}, "conflicts_resolved": [], "disputes_log": []}])
+    llm = StubLLM([_complete_reasoning(state)])
 
     plan = finalize(state, llm, MemoryTracer())
 
@@ -167,10 +175,70 @@ def test_changing_road_access_changes_allocation(sample_scenario):
     after = NegotiationState(scenario=changed_scenario, claims=claims)
 
     def llm_for():
-        return StubLLM([{"justifications": {}, "conflicts_resolved": [], "disputes_log": []}])
+        return StubLLM([_complete_reasoning(before)])
 
     before_plan = finalize(before, llm_for(), MemoryTracer())
     after_plan = finalize(after, llm_for(), MemoryTracer())
 
     assert before_plan.allocation["medical"] == {"boats": 1}
     assert after_plan.allocation["logistics"] == {"boats": 1}
+
+
+def test_empty_reasoning_retries_then_uses_data_driven_text(sample_scenario):
+    state = _state(sample_scenario)
+    llm = StubLLM([
+        {"justifications": {}, "conflicts_resolved": [], "disputes_log": []},
+        {"justifications": {"medical": "", "shelter": "  "},
+         "conflicts_resolved": [], "disputes_log": []},
+    ])
+
+    plan = finalize(state, llm, MemoryTracer())
+
+    assert not llm.responses
+    for claim in state.claims:
+        text = plan.justifications[claim.agent]
+        awarded = plan.allocation[claim.agent].get("boats", 0)
+        requested = claim.resources["boats"]
+        assert f"Score " in text
+        assert f"Requested boats={requested}" in text
+        assert f"awarded boats={awarded}" in text
+        assert f"shortfall boats={requested - awarded}" in text
+        assert "Trade-off" in text
+        assert "rank " in text
+        assert "allocated according to deterministic priority" not in text.casefold()
+
+
+def test_every_claim_has_requested_and_awarded_amounts(sample_scenario):
+    state = _state(sample_scenario)
+    llm = StubLLM([{
+        "justifications": {claim.agent: "Reasoned trade-off." for claim in state.claims},
+        "conflicts_resolved": [],
+        "disputes_log": [],
+    }])
+
+    plan = finalize(state, llm, MemoryTracer())
+
+    assert set(plan.justifications) == set(plan.allocation)
+    for claim in state.claims:
+        justification = plan.justifications[claim.agent]
+        for resource, requested in claim.resources.items():
+            awarded = plan.allocation[claim.agent].get(resource, 0)
+            assert f"Requested {resource}={requested}" in justification
+            assert f"awarded {resource}={awarded}" in justification
+
+
+def test_reduced_claim_is_listed_once_in_disputes(sample_scenario):
+    state = _state(sample_scenario)
+    llm = StubLLM([{
+        "justifications": {claim.agent: "Reasoned trade-off." for claim in state.claims},
+        "conflicts_resolved": [],
+        "disputes_log": [
+            "Medical request was reduced after review.",
+            "Medical could not receive all requested boats.",
+        ],
+    }])
+
+    plan = finalize(state, llm, MemoryTracer())
+
+    medical_disputes = [item for item in plan.disputes_log if "medical" in item.casefold()]
+    assert len(medical_disputes) == 1

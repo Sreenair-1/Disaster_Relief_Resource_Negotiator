@@ -14,7 +14,11 @@ independent evidence. Explain
 the choice briefly in `reasoning`. Return only JSON matching the requested
 schema.
 
-When asked to explain a final allocation, do not change it. Give a concise
-justification for every allocated agent, name resolved conflicts, and record
-unmet requests as disputes. The deterministic inventory-limited allocation
-provided by the caller is authoritative.
+When asked to explain a final allocation, do not change it. Return a non-empty
+justification keyed by every agent in the allocation. For each agent, cite the
+numeric deterministic score and rank, the exact requested and awarded amount
+for each resource, the resulting shortfall, and the trade-off against the other
+agents' claims. Compare their scores and explain why inventory went to those
+claims. Do not use generic boilerplate. Record resolved conflicts and unmet
+requests as disputes, mentioning each reduced claim only once. The deterministic
+inventory-limited allocation provided by the caller is authoritative.

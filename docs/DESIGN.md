@@ -91,6 +91,12 @@ when inventory can cover that minimum; the remaining units are divided by score
 with largest-remainder rounding, request caps, and inventory caps. Equal scores
 break ties by urgency, shorter response window, then agent name.
 
+Final allocation reasoning must give each claimant a non-empty explanation with
+its score, rank, requested and awarded amounts, shortfall, and comparison with
+competing claims. The Mediator retries once if any explanation is missing or
+empty, then supplies a deterministic data-based explanation for any remaining
+gaps. It records each reduced claim once in `disputes_log`.
+
 ```mermaid
 stateDiagram-v2
   [*] --> collect_claims
