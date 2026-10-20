@@ -5,7 +5,7 @@
 ```mermaid
 flowchart TD
   UI[Streamlit control room] --> R[ui.runner boundary<br/>placeholder]
-  R --> G[LangGraph orchestrator<br/>planned]
+  R --> G[LangGraph orchestrator]
   G --> S[Scenario agent<br/>stub]
   G --> M[Medical agent<br/>stub]
   G --> H[Shelter agent<br/>stub]
@@ -19,9 +19,31 @@ flowchart TD
   G --> O[Plan output]
 ```
 
-## Pattern
+## Orchestration
 
-Orchestrator-worker with bounded negotiation loop.
+`graph.negotiation.run_negotiation(scenario, llm, tracer)` gathers one claim
+from each worker, then routes mediator decisions through a bounded negotiation
+loop. A challenge sends the mediator's `Counter` to the named worker for a
+revised claim. Fallback and peer-estimate actions request evidence from that
+worker when the mediator identifies a tool gap or uncertain claim. The loop
+ends on a finalize decision or after three rounds; allocation remains the
+mediator's deterministic inventory-safe operation.
+
+`graph.replan.replan(state, event_text, llm, tracer)` applies an event through
+the Scenario agent, refreshes claims only for the returned `affected_agents`,
+then reallocates and increments the replan count. Unaffected claims are kept.
+
+```mermaid
+stateDiagram-v2
+  [*] --> collect_claims
+  collect_claims --> mediator_decide
+  mediator_decide --> challenge: challenge_agent
+  mediator_decide --> fallback: request_fallback / ask_peer_estimate
+  mediator_decide --> finalize: accept_revision / finalize / round >= 3
+  challenge --> mediator_decide
+  fallback --> mediator_decide
+  finalize --> [*]
+```
 
 ## Role table
 

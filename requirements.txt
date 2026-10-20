@@ -2,3 +2,4 @@ pydantic
 pytest
 openai
 streamlit
+langgraph
