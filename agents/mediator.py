@@ -2,6 +2,7 @@
 
 from pathlib import Path
 import json
+from math import floor
 from pydantic import BaseModel, Field
 
 from lib.schemas import Counter, MediatorAction, NegotiationState, Plan
@@ -113,25 +114,99 @@ def _counter_question(agent, action, deficits) -> str:
     return "Please justify your requested resources and address any uncertainty, or propose a fallback."
 
 
-def _priority(claim, scenario) -> float:
-    """Score urgency per affected person so urgent specialist claims lead allocation."""
-    return score_claim(claim, scenario) / max(claim.people_affected, 1)
+def _claim_order(claim, scenario):
+    """Order equal-score claims by urgency, response window, and agent name."""
+    return (
+        -score_claim(claim, scenario),
+        -claim.urgency,
+        claim.time_window_hrs,
+        claim.agent,
+    )
+
+
+def _resource_awards(claims, resource, inventory, scores, order):
+    """Split an oversubscribed resource by score with capped largest remainders."""
+    requests = {claim.agent: max(0, claim.resources.get(resource, 0)) for claim in claims}
+    target = min(max(0, inventory), sum(requests.values()))
+    if target == sum(requests.values()):
+        return requests
+
+    ordered_agents = [claim.agent for claim in order]
+    order_index = {agent: index for index, agent in enumerate(ordered_agents)}
+    awards = {agent: 0 for agent in requests}
+    active_agents = [agent for agent in ordered_agents if requests[agent] > 0]
+
+    # Preserve a one-unit foothold for each claimant when stock can support one.
+    # Divide the remaining stock by score; this keeps a small urgent claim viable.
+    if target >= len(active_agents):
+        for agent in active_agents:
+            awards[agent] = 1
+        budget = target - len(active_agents)
+    else:
+        budget = target
+
+    while budget > 0:
+        available = [agent for agent in active_agents if awards[agent] < requests[agent]]
+        if not available:
+            break
+        weighted = [agent for agent in available if scores[agent] > 0]
+        pool = weighted or available
+        weights = {agent: scores[agent] if weighted else 1.0 for agent in pool}
+        total_weight = sum(weights.values())
+        quotas = {agent: budget * weights[agent] / total_weight for agent in pool}
+
+        capped = [
+            agent for agent in pool
+            if quotas[agent] >= requests[agent] - awards[agent]
+        ]
+        if capped:
+            for agent in capped:
+                amount = requests[agent] - awards[agent]
+                awards[agent] += amount
+                budget -= amount
+                active_agents.remove(agent)
+            continue
+
+        base = {agent: floor(quotas[agent]) for agent in pool}
+        for agent, amount in base.items():
+            awards[agent] += amount
+            budget -= amount
+
+        remainders = sorted(
+            pool,
+            key=lambda agent: (-(quotas[agent] - base[agent]), order_index[agent]),
+        )
+        for agent in remainders:
+            if budget == 0:
+                break
+            if awards[agent] < requests[agent]:
+                awards[agent] += 1
+                budget -= 1
+        break
+
+    return awards
 
 
 def finalize(state: NegotiationState, llm, tracer: Tracer) -> Plan:
-    """Allocate by deterministic claim priority within inventory, then explain."""
-    remaining = dict(state.scenario.resources)
+    """Allocate by shared claim scores within inventory, then explain."""
     allocation: dict[str, dict[str, int]] = {}
-    claims = sorted(state.claims, key=lambda claim: (-_priority(claim, state.scenario), claim.agent))
+    claims = sorted(state.claims, key=lambda claim: _claim_order(claim, state.scenario))
+    scores = {claim.agent: score_claim(claim, state.scenario) for claim in claims}
     for claim in claims:
-        awarded: dict[str, int] = {}
-        for resource, requested in claim.resources.items():
-            available = max(remaining.get(resource, 0), 0)
-            amount = min(max(requested, 0), available)
+        allocation[claim.agent] = {}
+
+    resources = sorted({resource for claim in claims for resource in claim.resources})
+    for resource in resources:
+        awards = _resource_awards(
+            claims,
+            resource,
+            state.scenario.resources.get(resource, 0),
+            scores,
+            claims,
+        )
+        for agent, amount in awards.items():
             if amount:
-                awarded[resource] = amount
-                remaining[resource] = available - amount
-        allocation[claim.agent] = awarded
+                allocation[agent][resource] = amount
 
     deficits = over_subscribed(state.claims, state.scenario)
     reasoning = llm.complete_json(

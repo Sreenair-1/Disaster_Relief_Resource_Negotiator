@@ -81,6 +81,16 @@ scenario and sets `affected_agents`; replan refreshes only those agents' claims,
 keeps all other claims, increments `replans`, and asks Mediator to allocate
 again. The UI compares this plan with the first run.
 
+Allocation and negotiation use the same `score_claim`: people at risk × urgency
+× inverse response window × a per-claim road-access factor. Explicitly named
+zones determine access when present; otherwise Medical and Shelter use their
+affected populations, and unknown claims use a population-weighted zone average.
+The access factor has a 0.05 floor so a blocked route lowers a score without
+erasing it. For an oversubscribed resource, each claimant receives one unit
+when inventory can cover that minimum; the remaining units are divided by score
+with largest-remainder rounding, request caps, and inventory caps. Equal scores
+break ties by urgency, shorter response window, then agent name.
+
 ```mermaid
 stateDiagram-v2
   [*] --> collect_claims
