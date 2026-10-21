@@ -22,6 +22,7 @@ concessions, and unresolved shortfalls visible and auditable.
 
 ```mermaid
 flowchart TD
+<<<<<<< HEAD
   UI[Streamlit control room] -->|Scenario / event text| RUN[ui.runner]
   RUN -->|Scenario, LLM, Tracer| GRAPH[LangGraph orchestrator]
   GRAPH -->|NegotiationState| MED[Medical agent]
@@ -56,6 +57,23 @@ flowchart TD
   LLM <-->|Structured JSON| LOG
   LLM <-->|Decisions / reasoning| M
   LLM <-->|ScenarioPatch| SCEN
+=======
+  UI[Streamlit control room] --> R[ui.runner boundary<br/>placeholder]
+  R --> N[graph.negotiation<br/>orchestrator]
+  N --> S[Scenario agent<br/>event injector & diff validator]
+  N --> M[Medical agent<br/>critical care]
+  N --> H[Shelter agent<br/>evacuation & displaced]
+  N --> L[Logistics agent<br/>routes & resources]
+  M --> X[Mediator agent<br/>decision & early finalization]
+  H --> X
+  L --> X
+  S --> N
+  N --> RP[graph.replan<br/>affected-agent derivation]
+  RP --> N
+  X --> N
+  N --> T[Tracer]
+  N --> O[Plan output]
+>>>>>>> dev-b
 ```
 
 Each need agent calls tools through `lib.toolcall.call_tool`. That boundary
@@ -75,11 +93,21 @@ Medical, Shelter, and Logistics, asks Mediator for the next
 `request_fallback` / `ask_peer_estimate` to an estimate. The graph finalizes
 when Mediator selects `finalize` or the three-round cap is reached.
 
+<<<<<<< HEAD
 `graph.replan.replan(state, event_text, llm, tracer)` invokes
 `agents.scenario.inject_event`. The Scenario agent patches a deep copy of the
 scenario and sets `affected_agents`; replan refreshes only those agents' claims,
 keeps all other claims, increments `replans`, and asks Mediator to allocate
 again. The UI compares this plan with the first run.
+=======
+| Agent | Responsibility | Status |
+|---|---|---|
+| Medical | Prioritize critical patients | Implemented |
+| Shelter | Prioritize stranded residents | Implemented |
+| Logistics | Model transport constraints | Implemented |
+| Mediator | Resolve conflicts, challenge oversubscriptions, and finalize | Implemented |
+| Scenario | Inject changing conditions & validate state mutations | Implemented |
+>>>>>>> dev-b
 
 Allocation and negotiation use the same `score_claim`: people at risk × urgency
 × inverse response window × a per-claim road-access factor. Explicitly named
@@ -91,11 +119,41 @@ when inventory can cover that minimum; the remaining units are divided by score
 with largest-remainder rounding, request caps, and inventory caps. Equal scores
 break ties by urgency, shorter response window, then agent name.
 
+<<<<<<< HEAD
 Final allocation reasoning must give each claimant a non-empty explanation with
 its score, rank, requested and awarded amounts, shortfall, and comparison with
 competing claims. The Mediator retries once if any explanation is missing or
 empty, then supplies a deterministic data-based explanation for any remaining
 gaps. It records each reduced claim once in `disputes_log`.
+=======
+Inputs are `Scenario` and optional scenario events. Workers emit `Claim` or
+`Estimate`; the mediator emits `MediatorAction` and `Plan`. `NegotiationState`
+holds the complete loop state, including `estimates` and `claims`. `ScenarioDiff` models before/after field mutations.
+
+## Negotiation Orchestration & Claim Revisions (`graph/negotiation.py`)
+
+The negotiation loop coordinates dynamic multi-agent compromise:
+- **Estimate Feedback**: Estimates gathered via `request_fallback` or `ask_peer_estimate` are stored in `NegotiationState.estimates` and injected into subsequent Mediator context and need agents' revision prompts.
+- **Oversubscription & Challenges**: When resources are oversubscribed, the Mediator prefers `challenge_agent` targeting the lowest-scoring or highest-demand claimant. The challenged agent re-evaluates its claim with the Counter and feedback.
+- **Claim Revision Tracing**: Revised claims are traced as `claim_revision` events detailing changes in resources, urgency, and time windows. If an agent defends its claim unchanged, its defense justification is recorded.
+- **Early Finalization**: The Mediator finalizes as soon as nothing is oversubscribed or claims stop changing, rather than needlessly consuming rounds. The 3-round cap acts solely as a safety net.
+
+## Scenario Event Injection & Diff Validation
+
+The Scenario agent converts environmental events into structured `ScenarioPatch` mutations:
+- **Context Resolution**: Events are evaluated against the current scenario context (zones, roads, hospitals, resources). Vague events naming no zone apply across all plausible zones.
+- **Concrete Deltas**: Physical events must yield concrete numeric deltas (e.g. `road_access: {"Zone A": 0.0}`). Empty patches are strictly prohibited for valid physical events.
+- **Diff & Retry**: Patches are applied to a deep copy of the scenario and diffed against the original. If the diff is empty (a no-op), the agent retries once with an instruction to be specific. If still unchanged, the event is rejected with `is_valid=false` and reason `"event had no effect on the scenario"`.
+- **Tracing**: Valid mutations emit an `event_applied` trace with the full before/after diff of changed fields.
+
+## Replan & Affected-Agent Derivation (`graph/replan.py`)
+
+Rather than relying purely on LLM guesses, `affected_agents` are derived deterministically from the fields that actually changed:
+- `road/route` changes -> `logistics` is affected, plus every agent whose active claim references that zone must re-claim.
+- `casualties/hospital` changes -> `medical` is affected.
+- `stranded/shelter` changes -> `shelter` is affected.
+- `resources` changes -> `logistics` plus any agent whose claim requested that resource (and LLM nominated resource claimants).
+>>>>>>> dev-b
 
 ```mermaid
 stateDiagram-v2
@@ -113,6 +171,7 @@ stateDiagram-v2
   mediator_reallocate --> [*]
 ```
 
+<<<<<<< HEAD
 ## Roles and domain tools
 
 | Agent | Responsibility | Tools | Output |
@@ -191,3 +250,12 @@ Python 3.14 as supported by Community Cloud and allows version selection in
 Advanced settings; Cloud's deployment guide currently says its default is
 Python 3.12. Select 3.14 for this app. See [Cloud deployment](https://docs.streamlit.io/deploy/streamlit-community-cloud/deploy-your-app)
 and [supported Python versions](https://docs.streamlit.io/knowledge-base/using-streamlit/sanity-checks).
+=======
+`app.py` provides a Streamlit control room with a JSON scenario loader/editor
+validated by the `Scenario` Pydantic model, a Run action, transcript rendering
+from `Tracer` events, allocation and justification rows, event injection
+presets plus free text, failure injection, and JSONL trace download. Preset buttons
+name specific zones and magnitudes (e.g., "Bridge to Zone A collapses, cutting all ground road access to Zone A.").
+A UI warning is displayed whenever an event has no effect or is rejected. `ui/runner.py`
+is the narrow replacement point for the graph.
+>>>>>>> dev-b
