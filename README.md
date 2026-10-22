@@ -44,6 +44,10 @@ tool/counter badges, allocation, conflicts, negotiation rounds, and JSONL trace.
 Inject an event after a successful first run to see the before/after allocation
 comparison and the reasons for updated awards.
 
+When requests exceed stock, the Mediator records each claimant's response to a
+counter before early finalization. If the three-round safety cap is reached,
+the plan is marked `constrained` and reports unresolved resource shortfalls.
+
 ## Demo script
 
 1. Load the seed `data/scenario.json` (with Zone A and Zone B) and select

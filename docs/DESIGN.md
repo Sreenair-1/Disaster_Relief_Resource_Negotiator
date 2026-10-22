@@ -103,15 +103,16 @@ Mediator context and available to the target agent's revision prompt. An
 estimate informs the next decision or challenge rather than ending at the trace.
 
 **Decision logic.** The Mediator's `decide_next` follows this priority:
-1. If a resource is oversubscribed and no agent has revised since the last
-   counter, prefer `challenge_agent` so the targeted agent re-claims with the
-   Counter.
+1. If a resource is oversubscribed, challenge each affected claimant until its
+   latest counter receives a changed claim or an unchanged defense with
+   evidence. Counter snapshots and rounds are retained; unchanged claims are
+   defended, never counted as revisions. Finalize early only after all affected
+   claimants respond, or when total requests fit inventory.
 2. Use `request_fallback` / `ask_peer_estimate` only for uncertain claims or
    failed tools.
-3. Choose `finalize` early when nothing is oversubscribed or claims have stopped
-   changing. `accept_revision` also routes to finalization so the Mediator can
-   allocate from revised evidence. The hard cap at round 3 is a safety net only;
-   the graph forces finalization if it is reached.
+3. The three-round cap is a safety net. At the cap, finalize with
+   `status="constrained"` and explicit `unresolved_shortfalls` (resource, unmet
+   amount, claimants), rather than implying unresolved demand was settled.
 
 **Claim revision trace.** After a challenge, the graph traces the revised claim
 as event type `claim_revision` with a change summary (resources, urgency,
@@ -163,16 +164,16 @@ zone population. The road-access factor is floored at `0.05`, so a blocked
 route lowers a score without erasing it. For an oversubscribed resource, the
 Mediator splits inventory proportionally by score with largest-remainder
 rounding, caps each award at that claim's request, and caps total awards at
-inventory. When inventory can cover one unit for every claimant, each gets
-that one-unit foothold before the remaining units are split proportionally.
-Ties break by score descending, urgency descending, shorter response window,
+inventory. Ties break by score descending, urgency descending, shorter response window,
 then agent name.
 
 Final allocation reasoning must give each claimant a non-empty explanation with
 its score, rank, requested and awarded amounts, shortfall, and comparison with
 competing claims. The Mediator retries once if any explanation is missing or
 empty, then supplies a deterministic data-based explanation for any remaining
-gaps. It records each reduced claim once in `disputes_log`.
+gaps. It records each claim once in `disputes_log`: actual claim changes are
+described as revisions; Mediator stock caps say "awarded X of Y requested" and
+are never misattributed to the agent.
 
 ```mermaid
 stateDiagram-v2

@@ -40,6 +40,7 @@ def _complete_reasoning(state):
 def test_decision_varies_with_state_and_emits_counter(sample_scenario):
     tracer = MemoryTracer()
     first, second = _state(sample_scenario), _state(sample_scenario, round=2)
+    second.scenario.resources["boats"] = 5
     llm = StubLLM([
         {"action": "challenge_agent", "to_agent": "medical", "question": "Justify two boats.", "reasoning": "Uncertain."},
         {"action": "request_fallback", "to_agent": "shelter", "question": "Can you use one boat?", "reasoning": "Demand exceeds stock."},
@@ -62,6 +63,7 @@ def test_round_three_forces_finalize_without_llm(sample_scenario):
 def test_peer_estimate_decision_emits_targeted_counter(sample_scenario):
     tracer = MemoryTracer()
     state = _state(sample_scenario)
+    state.scenario.resources["boats"] = 5
     llm = StubLLM([{
         "action": "ask_peer_estimate", "to_agent": "logistics",
         "question": "Estimate access to Zone B.", "reasoning": "Medical telemetry is uncertain.",

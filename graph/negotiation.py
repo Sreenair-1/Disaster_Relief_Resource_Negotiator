@@ -10,7 +10,7 @@ from agents.medical import estimate as medical_estimate, make_claim as medical_c
 from agents.mediator import decide_next, finalize as mediator_finalize
 from agents.shelter import estimate as shelter_estimate, make_claim as shelter_claim
 from lib.feasibility import demand_totals, validate_claim_demand
-from lib.schemas import Counter, MediatorAction, NegotiationState
+from lib.schemas import ClaimRevision, Counter, MediatorAction, NegotiationState
 
 CLAIMERS = {"medical": medical_claim, "shelter": shelter_claim, "logistics": logistics_claim}
 ESTIMATORS = {"medical": medical_estimate, "shelter": shelter_estimate, "logistics": logistics_estimate}
@@ -101,13 +101,25 @@ def _challenge(ctx: _GraphState) -> _GraphState:
 
         # Trace the revised claim with a change summary
         changes = _claim_change_summary(old_claim, revision) if old_claim else {}
-        defended_unchanged = not changes
+        defended_unchanged = old_claim is not None and not changes
+        revision_record = ClaimRevision(
+            agent=agent,
+            round=state.round + 1,
+            previous_claim=old_claim,
+            current_claim=revision.model_copy(deep=True),
+            changes=changes,
+            defended_unchanged=defended_unchanged,
+            has_evidence=bool(revision.justification.strip()),
+        )
+        state.claim_revisions.append(revision_record)
         ctx["tracer"].log(agent, "mediator", "claim_revision", {
             "agent": agent,
             "changes": changes,
             "defended_unchanged": defended_unchanged,
             "justification": revision.justification,
             "revised_claim": revision.model_dump(),
+            "revision_round": revision_record.round,
+            "has_evidence": revision_record.has_evidence,
         })
     state.round += 1
     return {**ctx, "state": state, "action": None}

@@ -90,6 +90,18 @@ class Claim(BaseModel):
 class Counter(BaseModel):
     to_agent: str
     question: str
+    issued_round: int = Field(default=0, ge=0)
+    claim_snapshot: Claim | None = None
+
+
+class ClaimRevision(BaseModel):
+    agent: str
+    round: int = Field(ge=0)
+    previous_claim: Claim | None = None
+    current_claim: Claim
+    changes: dict[str, Any] = Field(default_factory=dict)
+    defended_unchanged: bool = False
+    has_evidence: bool = False
 
 
 class Estimate(BaseModel):
@@ -108,6 +120,12 @@ class MediatorAction(str, Enum):
     finalize = "finalize"
 
 
+class UnresolvedShortfall(BaseModel):
+    resource: str
+    unmet_amount: int = Field(ge=0)
+    agents: list[str] = Field(default_factory=list)
+
+
 class Plan(BaseModel):
     allocation: dict[str, dict[str, int]] = Field(default_factory=dict)
     justifications: dict[str, str] = Field(default_factory=dict)
@@ -115,6 +133,8 @@ class Plan(BaseModel):
     replans: int = 0
     rounds_used: int = 0
     disputes_log: list[str] = Field(default_factory=list)
+    status: str = "resolved"
+    unresolved_shortfalls: list[UnresolvedShortfall] = Field(default_factory=list)
 
 
 class ScenarioDiff(BaseModel):
@@ -140,3 +160,4 @@ class NegotiationState(BaseModel):
     plan: Plan | None = None
     replans: int = 0
     affected_agents: list[str] = Field(default_factory=list)
+    claim_revisions: list[ClaimRevision] = Field(default_factory=list)

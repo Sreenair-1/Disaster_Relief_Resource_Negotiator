@@ -68,6 +68,7 @@ def test_oversubscription_challenge_revised_claim_stored(monkeypatch):
 
     tracer = MemoryTracer()
     state = _oversubscribed_state()
+    state.claims[0].resources["boats"] = 0
 
     # LLM returns challenge_agent targeting shelter
     llm = StubLLM([

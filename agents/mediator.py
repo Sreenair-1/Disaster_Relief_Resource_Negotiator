@@ -5,7 +5,7 @@ import json
 from math import floor
 from pydantic import BaseModel, Field
 
-from lib.schemas import Counter, MediatorAction, NegotiationState, Plan
+from lib.schemas import Counter, MediatorAction, NegotiationState, Plan, UnresolvedShortfall
 from lib.scoring import over_subscribed, score_claim
 from lib.tracing import Tracer
 
@@ -30,28 +30,40 @@ def _system_prompt() -> str:
 
 
 def _agents_revised_since_last_counter(state: NegotiationState) -> set[str]:
-    """Return agents that submitted a revised claim after their last counter."""
-    # Build a map: agent -> index of their latest counter
-    last_counter_idx: dict[str, int] = {}
-    for i, counter in enumerate(state.counters):
-        last_counter_idx[counter.to_agent] = i
-
-    # Build a map: agent -> index of their latest claim
-    last_claim_idx: dict[str, int] = {}
-    for i, claim in enumerate(state.claims):
-        last_claim_idx[claim.agent] = i
-
-    # An agent "revised" if it has a claim submitted after receiving a counter
-    # We track this by checking if counters exist for agents that have claims
-    # Since claims are replaced in-place, we check if any counter was issued
-    # and the round progressed
-    revised = set()
-    countered_agents = set(last_counter_idx.keys())
-    # If a claim exists for a countered agent, they have responded
-    for agent in countered_agents:
-        if agent in last_claim_idx:
+    """Return agents whose latest post-counter claim changed materially."""
+    revised: set[str] = set()
+    for agent in {counter.to_agent for counter in state.counters}:
+        response = _latest_counter_response(state, agent)
+        if response and not response.defended_unchanged:
             revised.add(agent)
     return revised
+
+
+def _agents_defended_unchanged_since_last_counter(state: NegotiationState) -> set[str]:
+    """Return unchanged claims defended with non-empty evidence after a counter."""
+    defended: set[str] = set()
+    for agent in {counter.to_agent for counter in state.counters}:
+        response = _latest_counter_response(state, agent)
+        if response and response.defended_unchanged and response.has_evidence:
+            defended.add(agent)
+    return defended
+
+
+def _latest_counter_response(state: NegotiationState, agent: str):
+    counter = next((item for item in reversed(state.counters) if item.to_agent == agent), None)
+    if counter is None:
+        return None
+    return next((revision for revision in reversed(state.claim_revisions)
+                 if revision.agent == agent and revision.round > counter.issued_round), None)
+
+
+def _unresolved_conflict_agents(state, deficits, revised, defended):
+    involved = {
+        claim.agent
+        for claim in state.claims
+        if any(claim.resources.get(resource, 0) > 0 for resource in deficits)
+    }
+    return sorted(involved - revised - defended)
 
 
 def decide_next(state: NegotiationState, llm, tracer: Tracer) -> MediatorAction:
@@ -69,10 +81,13 @@ def decide_next(state: NegotiationState, llm, tracer: Tracer) -> MediatorAction:
     missing = [agent for agent in ("medical", "shelter", "logistics")
                if agent not in {claim.agent for claim in state.claims}]
 
-    # Track which agents revised since their last counter
+    # Only recorded post-counter claim revisions count as responses.
     countered_agents = {c.to_agent for c in state.counters}
     revised_agents = _agents_revised_since_last_counter(state)
-    unrevised_countered = countered_agents - revised_agents
+    defended_agents = _agents_defended_unchanged_since_last_counter(state)
+    unresolved_agents = _unresolved_conflict_agents(
+        state, deficits, revised_agents, defended_agents
+    )
 
     context = {
         "round": state.round,
@@ -86,7 +101,8 @@ def decide_next(state: NegotiationState, llm, tracer: Tracer) -> MediatorAction:
         "estimates": [est.model_dump() for est in state.estimates],
         "events": state.events,
         "agents_revised_since_counter": sorted(revised_agents),
-        "agents_not_yet_revised": sorted(unrevised_countered),
+        "agents_defended_unchanged_since_counter": sorted(defended_agents),
+        "agents_not_yet_responded": unresolved_agents,
     }
 
     if state.round >= 3:
@@ -101,6 +117,18 @@ def decide_next(state: NegotiationState, llm, tracer: Tracer) -> MediatorAction:
             _Decision,
         )
 
+    # Every oversubscribed claimant must revise or defend with evidence before
+    # an early final decision can be accepted.
+    forced_conflict_challenge = bool(deficits and unresolved_agents and state.round < 3)
+    if forced_conflict_challenge:
+        target = unresolved_agents[0]
+        decision = _Decision(
+            action=MediatorAction.challenge_agent,
+            to_agent=target,
+            question=_counter_question(target, MediatorAction.challenge_agent, deficits),
+            reasoning="Awaiting this oversubscribed claimant's revision or evidence.",
+        )
+
     counter = None
     if decision.action in {
         MediatorAction.challenge_agent,
@@ -109,7 +137,14 @@ def decide_next(state: NegotiationState, llm, tracer: Tracer) -> MediatorAction:
     }:
         agent = decision.to_agent or _counter_target(state, deficits, missing, uncertain)
         question = decision.question or _counter_question(agent, decision.action, deficits)
-        counter = Counter(to_agent=agent, question=question)
+        snapshot = next((claim.model_copy(deep=True) for claim in state.claims
+                         if claim.agent == agent), None)
+        counter = Counter(
+            to_agent=agent,
+            question=question,
+            issued_round=state.round,
+            claim_snapshot=snapshot,
+        )
         state.counters.append(counter)
 
     tracer.log("mediator", "agents", "decision", {
@@ -228,6 +263,61 @@ def _missing_justifications(reasoning, agents):
         if not reasoning.justifications.get(agent, "").strip()
         or boilerplate.rstrip(".") in reasoning.justifications[agent].strip().casefold()
     ]
+
+
+def _revision_since_latest_counter(state, agent):
+    counter = next((item for item in reversed(state.counters) if item.to_agent == agent), None)
+    if counter is None:
+        return None
+    return next((revision for revision in reversed(state.claim_revisions)
+                 if revision.agent == agent and revision.round > counter.issued_round), None)
+
+
+def _disputes_for_allocation(state, claims, allocation):
+    """Produce one accurate dispute entry per revised or capped claim."""
+    entries: list[str] = []
+    for claim in claims:
+        revision = _revision_since_latest_counter(state, claim.agent)
+        details: list[str] = []
+        if revision and not revision.defended_unchanged and revision.previous_claim:
+            before = revision.previous_claim.resources
+            after = revision.current_claim.resources
+            for resource in sorted(set(before) | set(after)):
+                old, new = before.get(resource, 0), after.get(resource, 0)
+                if old != new:
+                    details.append(f"revised {resource} request from {old} to {new}")
+
+        caps: list[str] = []
+        for resource, requested in sorted(claim.resources.items()):
+            awarded = allocation.get(claim.agent, {}).get(resource, 0)
+            if awarded < requested:
+                caps.append(
+                    f"awarded {awarded} of {requested} requested for {resource} "
+                    "(capped by Mediator from stock)"
+                )
+        if details or caps:
+            entries.append(f"{claim.agent}: " + "; ".join([*details, *caps]) + ".")
+    return entries
+
+
+def _unresolved_shortfalls(state, allocation):
+    shortfalls: list[UnresolvedShortfall] = []
+    for resource, excess in over_subscribed(state.claims, state.scenario).items():
+        if excess <= 0:
+            continue
+        agents = [
+            claim.agent for claim in state.claims
+            if claim.resources.get(resource, 0) > allocation.get(claim.agent, {}).get(resource, 0)
+        ]
+        shortfalls.append(UnresolvedShortfall(
+            resource=resource,
+            unmet_amount=sum(
+                max(0, claim.resources.get(resource, 0) - allocation.get(claim.agent, {}).get(resource, 0))
+                for claim in state.claims
+            ),
+            agents=agents,
+        ))
+    return shortfalls
 
 
 def _resource_text(resources):
@@ -355,27 +445,36 @@ def finalize(state: NegotiationState, llm, tracer: Tracer) -> Plan:
         )
         justifications[claim.agent] = f"{note} {detail}".strip()
 
-    shortfalls_by_agent = {
-        claim.agent: {
-            resource: requested - allocation.get(claim.agent, {}).get(resource, 0)
-            for resource, requested in claim.resources.items()
-            if requested > allocation.get(claim.agent, {}).get(resource, 0)
-        }
-        for claim in state.claims
-    }
-    reduced_agents = {agent for agent, shortfalls in shortfalls_by_agent.items() if shortfalls}
-    disputes = [
-        dispute for dispute in reasoning.disputes_log
-        if not any(agent.casefold() in dispute.casefold() for agent in reduced_agents)
-    ]
-    for claim in state.claims:
-        shortfalls = shortfalls_by_agent[claim.agent]
-        if shortfalls and not any(claim.agent.casefold() in item.casefold() for item in disputes):
-            disputes.append(f"{claim.agent} request was reduced: {shortfalls}.")
-    conflicts = list(reasoning.conflicts_resolved)
     deficits = over_subscribed(state.claims, state.scenario)
-    if deficits and not conflicts:
-        conflicts.append("Shared resource demand exceeded inventory; awards were capped to available stock.")
+    unresolved = _unresolved_shortfalls(state, allocation) if state.round >= 3 else []
+    unresolved_agents = _unresolved_conflict_agents(
+        state,
+        deficits,
+        _agents_revised_since_last_counter(state),
+        _agents_defended_unchanged_since_last_counter(state),
+    )
+    status = "constrained" if deficits or unresolved else "resolved"
+    if deficits:
+        if state.round >= 3:
+            conflicts = [
+                f"Round cap reached with {item.unmet_amount} {item.resource} unmet; "
+                f"unresolved claimants: {', '.join(item.agents)}."
+                for item in unresolved
+            ]
+        elif unresolved_agents:
+            conflicts = [
+                "Oversubscribed claims remain unaddressed; finalizing now would leave "
+                "unresolved shortfalls."
+            ]
+        else:
+            conflicts = [
+                "Claimants revised or defended their requests; inventory still cannot "
+                "meet all demand."
+            ]
+    else:
+        conflicts = list(reasoning.conflicts_resolved)
+
+    disputes = _disputes_for_allocation(state, claims, allocation)
 
     plan = Plan(
         allocation=allocation,
@@ -384,6 +483,8 @@ def finalize(state: NegotiationState, llm, tracer: Tracer) -> Plan:
         replans=state.replans,
         rounds_used=state.round,
         disputes_log=disputes,
+        status=status,
+        unresolved_shortfalls=unresolved,
     )
     tracer.log("mediator", "system", "plan", plan.model_dump())
     return plan
