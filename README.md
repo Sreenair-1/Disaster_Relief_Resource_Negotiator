@@ -52,6 +52,8 @@ feasibility caps, and splits stock proportionally only within tied priority
 tiers. Severity weights are documented model assumptions.
 Medical support is marked unverified when ICU or receiving-facility data is
 unknown; infeasible road or unavailable-boat fallback options are rejected.
+The final plan includes a feasibility report, and its explanations are checked
+against the numeric scores, ranks, requests, and awards before display.
 
 ## Demo script
 

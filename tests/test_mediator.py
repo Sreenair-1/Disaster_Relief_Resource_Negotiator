@@ -229,6 +229,34 @@ def test_every_claim_has_requested_and_awarded_amounts(sample_scenario):
             assert f"awarded {resource}={awarded}" in justification
 
 
+def test_contradictory_reasoning_retries_then_uses_consistent_fallback(sample_scenario):
+    state = _state(sample_scenario)
+    bad = {"justifications": {"medical": "Score 999.000 rank 1 highest priority, Requested boats=2, awarded boats=99.",
+                              "shelter": "Score 1.000 rank 2 highest priority, Requested boats=2, awarded boats=0."},
+           "conflicts_resolved": [], "disputes_log": []}
+    llm = StubLLM([bad, bad])
+    plan = finalize(state, llm, MemoryTracer())
+    assert not llm.responses
+    ranked = sorted(state.claims, key=lambda item: (
+        -float(score_claim_for_test(item, state)), -item.urgency,
+        item.time_window_hrs, item.agent,
+    ))
+    ranks = {item.agent: index for index, item in enumerate(ranked, start=1)}
+    for claim in state.claims:
+        text = plan.justifications[claim.agent]
+        assert f"Score {score_claim_for_test(claim, state)}" in text
+        assert f"rank {ranks[claim.agent]}" in text
+        assert f"awarded boats={plan.allocation[claim.agent].get('boats', 0)}" in text
+        assert "highest priority" not in text
+    assert "demand_totals" in plan.feasibility_report
+    assert "unverified_assumptions" in plan.feasibility_report
+
+
+def score_claim_for_test(claim, state):
+    from lib.scoring import score_claim
+    return f"{score_claim(claim, state.scenario):.3f}"
+
+
 def test_reduced_claim_is_listed_once_in_disputes(sample_scenario):
     state = _state(sample_scenario)
     llm = StubLLM([{

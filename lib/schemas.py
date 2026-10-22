@@ -137,6 +137,7 @@ class Plan(BaseModel):
     status: str = "resolved"
     unresolved_shortfalls: list[UnresolvedShortfall] = Field(default_factory=list)
     risks: list[str] = Field(default_factory=list)
+    feasibility_report: dict[str, Any] = Field(default_factory=dict)
 
 
 class ScenarioDiff(BaseModel):

@@ -176,9 +176,12 @@ then agent name.
 
 Final allocation reasoning must give each claimant a non-empty explanation with
 its score, rank, requested and awarded amounts, shortfall, and comparison with
-competing claims. The Mediator retries once if any explanation is missing or
-empty, then supplies a deterministic data-based explanation for any remaining
-gaps. It records each claim once in `disputes_log`: actual claim changes are
+competing claims. The Mediator validates the numeric citations and priority
+language, retries once with listed contradictions, then uses deterministic
+data-based explanations if the repair is still inconsistent or fails. `Plan`
+also carries `feasibility_report` with checks, unresolved shortfalls, unknown
+assumptions, and de-duplicated demand totals. It records each claim once in
+`disputes_log`: actual claim changes are
 described as revisions; Mediator stock caps say "awarded X of Y requested" and
 are never misattributed to the agent.
 

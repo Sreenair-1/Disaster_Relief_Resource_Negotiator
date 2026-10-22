@@ -3,10 +3,12 @@
 from pathlib import Path
 import json
 from math import floor
+import re
 from pydantic import BaseModel, Field
 
 from lib.schemas import Counter, MediatorAction, NegotiationState, Plan, UnresolvedShortfall
 from lib.feasibility import unit_cap
+from lib.feasibility import demand_totals
 from lib.scoring import over_subscribed, score_claim
 from lib.tracing import Tracer
 
@@ -361,6 +363,30 @@ def _deterministic_justification(claim, allocation, scores, rank, competitors):
     )
 
 
+def _justification_contradictions(reasoning, claims, allocation, scores):
+    ranks = {claim.agent: index for index, claim in enumerate(claims, start=1)}
+    problems = []
+    for claim in claims:
+        note = reasoning.justifications.get(claim.agent, "").strip()
+        if not note:
+            problems.append(f"{claim.agent}: missing justification")
+            continue
+        expected_score = f"{scores[claim.agent]:.3f}"
+        if expected_score not in note:
+            problems.append(f"{claim.agent}: score citation does not match {expected_score}")
+        if not re.search(rf"\brank\s*{ranks[claim.agent]}\b", note, re.I):
+            problems.append(f"{claim.agent}: rank citation does not match {ranks[claim.agent]}")
+        for resource, requested in claim.resources.items():
+            award = allocation.get(claim.agent, {}).get(resource, 0)
+            if not re.search(rf"Requested\s+{re.escape(resource)}\s*=\s*{requested}\b", note, re.I):
+                problems.append(f"{claim.agent}: requested {resource} citation mismatch")
+            if not re.search(rf"awarded\s+{re.escape(resource)}\s*=\s*{award}\b", note, re.I):
+                problems.append(f"{claim.agent}: awarded {resource} citation mismatch")
+        if ranks[claim.agent] > 1 and re.search(r"highest\s+priority|top\s+priority", note, re.I):
+            problems.append(f"{claim.agent}: lower-ranked claim described as highest priority")
+    return problems
+
+
 def finalize(state: NegotiationState, llm, tracer: Tracer) -> Plan:
     """Allocate by shared claim scores within inventory, then explain."""
     allocation: dict[str, dict[str, int]] = {}
@@ -394,15 +420,21 @@ def finalize(state: NegotiationState, llm, tracer: Tracer) -> Plan:
     )
     reasoning = llm.complete_json(prompt, user, _PlanReasoning)
     missing = _missing_justifications(reasoning, allocation)
-    if missing:
+    contradictions = _justification_contradictions(reasoning, claims, allocation, scores)
+    if missing or contradictions:
         retry_user = (
-            "Retry the allocation explanation. These entries were missing or empty: "
-            f"{missing}. Return a non-empty justification for every agent, including "
+            "Retry the allocation explanation. Missing/empty entries: "
+            f"{missing}. Data contradictions to correct: {contradictions}. "
+            "Return a justification for every agent, including "
             "numeric score, rank, requested and awarded amounts, shortfall, and the "
             "trade-off against competing claims. Do not change the allocation.\n"
             + json.dumps(context)
         )
-        reasoning = llm.complete_json(prompt, retry_user, _PlanReasoning)
+        try:
+            reasoning = llm.complete_json(prompt, retry_user, _PlanReasoning)
+        except Exception:
+            # The deterministic report remains usable if the repair call fails.
+            pass
 
     ranks = {claim.agent: index for index, claim in enumerate(claims, start=1)}
     competitors = {
@@ -412,6 +444,7 @@ def finalize(state: NegotiationState, llm, tracer: Tracer) -> Plan:
         ]
         for claim in claims
     }
+    contradictions = _justification_contradictions(reasoning, claims, allocation, scores)
     justifications = {}
     for claim in claims:
         note = reasoning.justifications.get(claim.agent, "").strip()
@@ -420,7 +453,8 @@ def finalize(state: NegotiationState, llm, tracer: Tracer) -> Plan:
         detail = _deterministic_justification(
             claim, allocation, scores, ranks[claim.agent], competitors[claim.agent]
         )
-        justifications[claim.agent] = f"{note} {detail}".strip()
+        valid_note = note if not contradictions and claim.agent not in _missing_justifications(reasoning, allocation) else ""
+        justifications[claim.agent] = f"{valid_note} {detail}".strip()
 
     deficits = over_subscribed(state.claims, state.scenario)
     unresolved = _unresolved_shortfalls(state, allocation) if state.round >= 3 else []
@@ -464,6 +498,19 @@ def finalize(state: NegotiationState, llm, tracer: Tracer) -> Plan:
         unresolved_shortfalls=unresolved,
         risks=[f"{claim.agent}: medical receiving support is unverified or insufficient"
                for claim in state.claims if claim.unverified_support],
+        feasibility_report={
+            "checks_passed": ["demand partitions are disjoint", "allocation capped by inventory and useful unit cap"],
+            "checks_failed": ["oversubscribed demand remains"] if deficits else [],
+            "unresolved_shortfalls": [item.model_dump() for item in unresolved],
+            "unverified_assumptions": sorted({
+                label for label, unknown in (
+                    ("boat capacity", state.scenario.operations.boat_capacity_persons is None),
+                    ("route trip times", not state.scenario.operations.trip_hours_by_zone),
+                    ("hospital receiving capacity", any(h.icu_beds_free is None for h in state.scenario.operations.hospitals)),
+                ) if unknown
+            }),
+            "demand_totals": demand_totals(state.scenario),
+        },
     )
     tracer.log("mediator", "system", "plan", plan.model_dump())
     return plan
