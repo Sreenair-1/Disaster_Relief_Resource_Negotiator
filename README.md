@@ -34,27 +34,29 @@ Without one, the UI shows a setup message. The graph can also be called with
 streamlit run app.py
 ```
 
-Load a JSON scenario from `data/scenario.json` or `data/scenarios/`, edit it if
-needed, and select **Run**. The control room shows the colored agent transcript,
+Load the seed scenario from `data/scenario.json` or a scenario from
+`data/scenarios/`, edit it if needed, and select **Run**. The control room shows
+the colored agent transcript,
 tool/counter badges, allocation, conflicts, negotiation rounds, and JSONL trace.
 Inject an event after a successful first run to see the before/after allocation
 comparison and the reasons for updated awards.
 
 ## Demo script
 
-1. Load `data/scenarios/wayanad_monsoon_flood.json` and select **Run**. Review
-   the first allocation and the three specialist claims.
-2. Enter `Bridge to Zone A collapses, blocking all ground road access.` and
+1. Load the seed `data/scenario.json` (with Zone A and Zone B) and select
+   **Run**. Review the first allocation and the three specialist claims.
+2. Enter the preset event
+   `Bridge to Zone A collapses, cutting all ground road access to Zone A.` and
    select **Inject event**. Review the new scenario facts, affected-agent
    refresh, and first-run versus replan allocation comparison.
-3. Enable **Simulate tool failure** in the sidebar, then inject
-   `Flash surge in Zone B: 15 additional critical casualties reported.` The
-   transcript records failed tool calls; agents continue with uncertainty and
+3. Enable **Simulate tool failure** in the sidebar, then enter the preset event
+   `Eight new critical patients arrive in Zone B.` and select **Inject event**.
+   The transcript records failed tool calls; agents continue with uncertainty and
    fallback estimates, and a warning panel shows unavailable tool data.
-4. Disable **Simulate tool failure**, then inject
-   `Road access to Zone B is restored for emergency vehicles.` The affected
-   agents query healthy tools and the replan comparison shows the recovery.
-5. Download the JSONL transcript for review.
+4. Disable **Simulate tool failure**. Download **Download trace** as
+   `trace_full_run.jsonl` and **Download final plan** as
+   `output_full_run.json`, saving both into `samples/`. The preset event texts come from
+   `agents.scenario.PRESET_EVENTS` (`bridge_collapse` and `new_casualties`).
 
 ## Test
 

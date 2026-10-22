@@ -73,12 +73,14 @@ baseline fallback estimate.
 Medical, Shelter, and Logistics, asks Mediator for the next
 `MediatorAction`, and routes `challenge_agent` to a revision or
 `request_fallback` / `ask_peer_estimate` to an estimate. The graph finalizes
-when Mediator selects `finalize` or the three-round cap is reached.
+when Mediator selects `finalize` or `accept_revision`, or when the three-round
+cap is reached.
 
-**Estimates stored.** Estimates returned by agents during
+**Estimate feedback loop.** Estimates returned by agents during
 `request_fallback` / `ask_peer_estimate` are stored in
 `NegotiationState.estimates` (not just logged). They are included in the next
-Mediator context and available to the target agent's revision prompt.
+Mediator context and available to the target agent's revision prompt. An
+estimate informs the next decision or challenge rather than ending at the trace.
 
 **Decision logic.** The Mediator's `decide_next` follows this priority:
 1. If a resource is oversubscribed and no agent has revised since the last
@@ -86,8 +88,10 @@ Mediator context and available to the target agent's revision prompt.
    Counter.
 2. Use `request_fallback` / `ask_peer_estimate` only for uncertain claims or
    failed tools.
-3. Choose `finalize` as soon as nothing is oversubscribed or claims stopped
-   changing. The hard cap at round 3 is a safety net only.
+3. Choose `finalize` early when nothing is oversubscribed or claims have stopped
+   changing. `accept_revision` also routes to finalization so the Mediator can
+   allocate from revised evidence. The hard cap at round 3 is a safety net only;
+   the graph forces finalization if it is reached.
 
 **Claim revision trace.** After a challenge, the graph traces the revised claim
 as event type `claim_revision` with a change summary (resources, urgency,
@@ -122,22 +126,27 @@ When road access changes for a zone, every agent whose existing claim references
 that zone is also added so they re-claim with updated conditions.
 
 **Trace.** A successful patch logs an `event_applied` trace event containing the
-patch, the `ScenarioDiff`, and the derived `affected_agents`.
+patch, the `ScenarioDiff`, and the derived `affected_agents`. Rejected no-op
+events instead produce `event_rejected` and do not advance replanning.
 
 Replan refreshes only affected agents' claims, keeps all other claims,
 increments `replans`, and asks Mediator to allocate again. If the event was
 rejected (no affected agents), replan returns the unmodified state without
 incrementing `replans`. The UI compares this plan with the first run.
 
-Allocation and negotiation use the same `score_claim`: people at risk × urgency
-× inverse response window × a per-claim road-access factor. Explicitly named
-zones determine access when present; otherwise Medical and Shelter use their
-affected populations, and unknown claims use a population-weighted zone average.
-The access factor has a 0.05 floor so a blocked route lowers a score without
-erasing it. For an oversubscribed resource, each claimant receives one unit
-when inventory can cover that minimum; the remaining units are divided by score
-with largest-remainder rounding, request caps, and inventory caps. Equal scores
-break ties by urgency, shorter response window, then agent name.
+Allocation and Mediator context use the same `score_claim` formula:
+`Claim.people_affected × urgency × (1 / max(time_window_hrs, 1)) × road_access_factor`.
+Road access is computed for each claim from the zones it names. If no zone is
+named, Medical uses critical-patient zones and Shelter uses stranded-population
+zones, weighted by the relevant people count; otherwise access is weighted by
+zone population. The road-access factor is floored at `0.05`, so a blocked
+route lowers a score without erasing it. For an oversubscribed resource, the
+Mediator splits inventory proportionally by score with largest-remainder
+rounding, caps each award at that claim's request, and caps total awards at
+inventory. When inventory can cover one unit for every claimant, each gets
+that one-unit foothold before the remaining units are split proportionally.
+Ties break by score descending, urgency descending, shorter response window,
+then agent name.
 
 Final allocation reasoning must give each claimant a non-empty explanation with
 its score, rank, requested and awarded amounts, shortfall, and comparison with
@@ -152,15 +161,16 @@ stateDiagram-v2
   mediator_decide --> challenge: challenge_agent
   mediator_decide --> fallback: request_fallback / ask_peer_estimate
   mediator_decide --> finalize: accept_revision / finalize / round >= 3
-  challenge --> mediator_decide
-  fallback --> mediator_decide
+  challenge --> mediator_decide: claim_revision
+  fallback --> mediator_decide: save Estimate to state
   finalize --> [*]
   [*] --> event_inject: replan(event_text)
   event_inject --> diff_check: apply patch & diff
   diff_check --> reject_noop: diff empty
   diff_check --> derive_agents: diff non-empty
   reject_noop --> [*]: is_valid=false, UI warning
-  derive_agents --> refresh_affected_claims
+  derive_agents --> trace_event_applied: event_applied
+  trace_event_applied --> refresh_affected_claims
   refresh_affected_claims --> mediator_reallocate
   mediator_reallocate --> [*]
 ```

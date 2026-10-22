@@ -1,1 +1,28 @@
-{"allocation": {"medical": {"boats": 2}, "shelter": {"boats": 1}}, "rounds_used": 1}
+{
+  "allocation": {
+    "shelter": {
+      "boats": 1
+    },
+    "logistics": {
+      "boats": 1
+    },
+    "medical": {
+      "boats": 1
+    }
+  },
+  "justifications": {
+    "shelter": "Evacuation demand competes for limited boats. Score 234.000; rank 1. Requested boats=3, shelter_beds=312; awarded boats=1, shelter_beds=0; shortfall boats=2, shelter_beds=312. Trade-off: this award balances shelter's need against competing claims from logistics (score 104.000); medical (score 18.000).",
+    "logistics": "Supply delivery shares the constrained transport fleet. Score 104.000; rank 2. Requested boats=2, food_rations=312, water_liters=3120; awarded boats=1, food_rations=0, water_liters=0; shortfall boats=1, food_rations=312, water_liters=3120. Trade-off: this award balances logistics's need against competing claims from shelter (score 234.000); medical (score 18.000).",
+    "medical": "Urgent patient transfer has the highest acuity. Score 18.000; rank 3. Requested boats=2; awarded boats=1; shortfall boats=1. Trade-off: this award balances medical's need against competing claims from shelter (score 234.000); logistics (score 104.000)."
+  },
+  "conflicts_resolved": [
+    "Shared resource demand exceeded inventory; awards were capped to available stock."
+  ],
+  "replans": 0,
+  "rounds_used": 1,
+  "disputes_log": [
+    "medical request was reduced: {'boats': 1}.",
+    "shelter request was reduced: {'boats': 2, 'shelter_beds': 312}.",
+    "logistics request was reduced: {'boats': 1, 'food_rations': 312, 'water_liters': 3120}."
+  ]
+}

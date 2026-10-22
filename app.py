@@ -1,7 +1,8 @@
 """Streamlit control room for a disaster relief negotiation."""
 
-from pathlib import Path
+import json
 import os
+from pathlib import Path
 
 import streamlit as st
 from dotenv import load_dotenv
@@ -148,10 +149,17 @@ def main() -> None:
 
         result = st.session_state.get("run_result")
         if result:
+            if result.get("plan"):
+                st.download_button(
+                    "Download final plan",
+                    data=json.dumps(result["plan"], indent=2, ensure_ascii=False),
+                    file_name="output_full_run.json",
+                    mime="application/json",
+                )
             st.download_button(
                 "Download trace",
-                data="\n".join(__import__("json").dumps(e, default=str) for e in result["events"]),
-                file_name="negotiation-trace.jsonl",
+                data="\n".join(json.dumps(e, default=str) for e in result["events"]),
+                file_name="trace_full_run.jsonl",
                 mime="application/x-ndjson",
             )
 
