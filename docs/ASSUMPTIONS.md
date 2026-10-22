@@ -17,3 +17,11 @@ verified operational data and must not be presented as field measurements.
   separately.
 - Legacy hospital names normalize to facility records with `None` for ICU
   beds, transfer acceptance, and travel time. `None` means unverified, not zero.
+
+## Commit 3: priority policy
+
+- Priority severity weights are policy assumptions: Medical 20.0, Shelter 2.0,
+  Logistics 1.0. They are demonstration weights, not clinical evidence.
+- When equally scored claims compete for insufficient stock, the split is
+  proportional to each claim's useful unit cap; largest remainders follow the
+  existing urgency, time-window, agent tie-break.

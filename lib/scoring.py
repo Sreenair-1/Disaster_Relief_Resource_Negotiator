@@ -1,6 +1,11 @@
 from collections import defaultdict
 
 from lib.schemas import Claim, Scenario
+from lib.feasibility import unit_cap
+
+# Demo policy weights; see docs/ASSUMPTIONS.md. These are tunable priorities,
+# not measured clinical or operational constants.
+SEVERITY_WEIGHTS = {"medical": 20.0, "shelter": 2.0, "logistics": 1.0}
 
 
 def _claim_zones(claim: Claim, scenario: Scenario):
@@ -43,13 +48,18 @@ def road_access_factor(claim: Claim, scenario: Scenario) -> float:
 
 
 def score_claim(claim: Claim, scenario: Scenario) -> float:
-    """Score people at risk by urgency, time criticality, and relevant access."""
+    """Score severity-weighted people by urgency, deadline, access, feasibility."""
     time_criticality = 1 / max(claim.time_window_hrs, 1)
+    requested = sum(max(0, amount) for amount in claim.resources.values())
+    usable = sum(unit_cap(claim, scenario, resource) for resource in claim.resources)
+    feasibility = min(1.0, usable / requested) if requested else 1.0
     return (
         claim.people_affected
+        * SEVERITY_WEIGHTS.get(claim.agent, 1.0)
         * claim.urgency
         * time_criticality
         * road_access_factor(claim, scenario)
+        * feasibility
     )
 
 

@@ -167,7 +167,7 @@ def test_changing_road_access_changes_allocation(sample_scenario):
     ]
     claims = [
         _claim("medical", {"boats": 1}, 20, 8, 4, uncertainty=0),
-        _claim("logistics", {"boats": 1}, 20, 8, 4, uncertainty=0),
+        _claim("logistics", {"boats": 1}, 200, 8, 4, uncertainty=0),
     ]
     claims[0].justification = "Patients in Medical Zone need transport."
     claims[1].justification = "Supplies for Logistics Zone need transport."

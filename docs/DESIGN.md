@@ -156,14 +156,16 @@ rejected (no affected agents), replan returns the unmodified state without
 incrementing `replans`. The UI compares this plan with the first run.
 
 Allocation and Mediator context use the same `score_claim` formula:
-`Claim.people_affected × urgency × (1 / max(time_window_hrs, 1)) × road_access_factor`.
+`people_affected × severity_weight × urgency × (1 / max(time_window_hrs, 1)) × road_access_factor × feasibility_multiplier`.
+Severity weights are policy assumptions listed in `docs/ASSUMPTIONS.md`.
 Road access is computed for each claim from the zones it names. If no zone is
 named, Medical uses critical-patient zones and Shelter uses stranded-population
 zones, weighted by the relevant people count; otherwise access is weighted by
 zone population. The road-access factor is floored at `0.05`, so a blocked
 route lowers a score without erasing it. For an oversubscribed resource, the
-Mediator splits inventory proportionally by score with largest-remainder
-rounding, caps each award at that claim's request, and caps total awards at
+Mediator allocates score tiers in priority order up to each claim's useful
+`unit_cap`; only an equally scored tier shares insufficient stock
+proportionally with largest-remainder rounding. Total awards are capped at
 inventory. Ties break by score descending, urgency descending, shorter response window,
 then agent name.
 

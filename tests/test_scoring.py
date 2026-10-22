@@ -6,7 +6,7 @@ def test_score_is_deterministic(sample_scenario):
     claim = Claim(agent="medical", resources={"boats": 2}, people_affected=12,
                   urgency=10, time_window_hrs=2, justification="critical",
                   fallback_option="ambulance")
-    assert score_claim(claim, sample_scenario) == 18
+    assert score_claim(claim, sample_scenario) == 180
 
 
 def test_blocked_unrelated_zone_does_not_zero_claim_score(sample_scenario):
@@ -15,7 +15,7 @@ def test_blocked_unrelated_zone_does_not_zero_claim_score(sample_scenario):
                   urgency=10, time_window_hrs=2, justification="critical patients",
                   fallback_option="transfer")
 
-    assert score_claim(claim, sample_scenario) == 18
+    assert score_claim(claim, sample_scenario) == 360
 
 
 def test_unknown_zone_uses_people_weighted_access():

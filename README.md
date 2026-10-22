@@ -47,6 +47,9 @@ comparison and the reasons for updated awards.
 When requests exceed stock, the Mediator records each claimant's response to a
 counter before early finalization. If the three-round safety cap is reached,
 the plan is marked `constrained` and reports unresolved resource shortfalls.
+Allocation ranks severity-weighted, time-sensitive claims, respects known
+feasibility caps, and splits stock proportionally only within tied priority
+tiers. Severity weights are documented model assumptions.
 
 ## Demo script
 
