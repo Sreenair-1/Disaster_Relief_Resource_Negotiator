@@ -27,11 +27,7 @@ The core contracts are `Zone`, `Scenario`, `Claim`, `Counter`, `Estimate`,
 `MediatorAction`, `Plan`, and `NegotiationState`. The Scenario agent also uses
 `ScenarioPatch`. Full examples and architecture are in [DESIGN.md](DESIGN.md).
 
-## Scope changes from CA2
+## Scope changes
 
 The CA3 ideas document proposed six agents. The implemented system has five:
-Medical, Shelter, Logistics, Mediator, and Scenario. Logistics covers both
-food and water supply needs, so a separate supply agent was not needed. The
-`Zone` schema includes `name`, `population`, `stranded`, `critical_patients`,
-and `road_access` from 0 to 1. Mediator allocates resources per agent from
-their separate claims and explains awards and shortfalls.
+Medical, Shelter, Logistics, Mediator, and Scenario. Logistics covers both food and water supply needs, so a separate supply agent was not needed. The `Zone` schema includes `name`, `population`, `stranded`, `critical_patients`, and `road_access` from 0 to 1. Mediator allocates resources per agent from their separate claims and explains awards and shortfalls.

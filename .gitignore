@@ -6,3 +6,4 @@ __pycache__/
 .coverage
 traces/
 .streamlit/secrets.toml
+.vscode/
