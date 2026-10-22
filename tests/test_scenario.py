@@ -461,6 +461,12 @@ def test_preset_event_produces_non_empty_diff(key, sample_scenario, tracer):
 
     # affected_agents must be non-empty
     assert len(new_state.affected_agents) > 0, f"Preset '{key}' had no affected agents"
+    if key == "hospital_capacity":
+        hospital = new_state.scenario.operations.hospitals[0]
+        assert hospital.icu_beds_free == 0
+        assert hospital.accepts_transfers is False
+        assert "hospital_capacity" in diff_payload["changed_fields"]
+        assert new_state.affected_agents == ["medical"]
 
 
 # ── Diff & utility unit tests ───────────────────────────────────────

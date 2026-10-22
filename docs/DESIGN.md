@@ -141,6 +141,11 @@ rejected with `is_valid=false` and the reason `"event had no effect on the
 scenario"`. A UI warning is shown, and no-ops are never reported as successful
 replans.
 
+Exact demo `PRESET_EVENTS` have deterministic patches so the displayed event
+always produces the described diff. `hospital_capacity` updates the named
+receiving-facility record (including zero free ICU beds and transfer refusal
+for the full-capacity preset), and the actual field diff re-triggers Medical.
+
 **Derived affected agents.** `affected_agents` is derived from the fields that
 actually changed in the diff, not solely from the LLM's guess:
 - `road_access` or `roads` change → `logistics`, `medical`, `shelter`
@@ -156,7 +161,11 @@ patch, the `ScenarioDiff`, and the derived `affected_agents`. Rejected no-op
 events instead produce `event_rejected` and do not advance replanning.
 
 Replan refreshes only affected agents' claims, keeps all other claims,
-increments `replans`, and asks Mediator to allocate again. If the event was
+increments `replans`, and, if those claims remain oversubscribed, asks one
+affected claimant to answer a short counter before Mediator reallocates. Each
+affected agent receives a `reassessment` trace with before/after scores,
+requests, awards, and reason; the UI uses that reason in the allocation table.
+If the event was
 rejected (no affected agents), replan returns the unmodified state without
 incrementing `replans`. The UI compares this plan with the first run.
 
@@ -202,15 +211,18 @@ stateDiagram-v2
   reject_noop --> [*]: is_valid=false, UI warning
   derive_agents --> trace_event_applied: event_applied
   trace_event_applied --> refresh_affected_claims
-  refresh_affected_claims --> mediator_reallocate
-  mediator_reallocate --> [*]
+  refresh_affected_claims --> short_challenge: oversubscribed
+  short_challenge --> mediator_reallocate: claim_revision
+  refresh_affected_claims --> mediator_reallocate: otherwise
+  mediator_reallocate --> trace_reassessment: per affected agent
+  trace_reassessment --> [*]
 ```
 
 ## Roles and domain tools
 
 | Agent | Responsibility | Tools | Output |
 |---|---|---|---|
-| Medical | Critical patients, triage urgency, hospital capacity, medical transport | `hospital_capacity`, `casualty_estimate` | `Claim`; peer `Estimate` |
+| Medical | Critical patients, triage urgency, hospital capacity, medical transport | `hospital_capacity`, `receiving_capacity`, `transport_options`, `casualty_estimate` | `Claim`; peer `Estimate` |
 | Shelter | Stranded residents, shelter capacity, evacuation and phased rescue | `shelter_capacity`, `zone_population` | `Claim`; peer `Estimate` |
 | Logistics | Supplies, vehicles, route access, transport feasibility | `road_status`, `vehicle_inventory`, `stock_levels` | `Claim`; peer `Estimate` |
 | Mediator | Challenge claims, request fallback/peer evidence, resolve conflict and allocate inventory | Deterministic scoring and inventory | `MediatorAction`, `Counter`, `Plan` |
@@ -222,7 +234,9 @@ The Pydantic models in `lib/schemas.py` are the shared I/O contracts:
 `Zone`, `Hospital`, `Operations`, `Scenario`, `Claim`, `Counter`, `Estimate`,
 `MediatorAction`, `Plan`, `ScenarioDiff`, and `NegotiationState`. The Scenario agent additionally
 validates a `ScenarioPatch` and computes a `ScenarioDiff` to detect no-ops
-and derive `affected_agents`. A compact sample matching those schemas follows.
+and derive `affected_agents`. Runnable examples are `samples/input.json` and
+`samples/output.json`; the latter is an illustrative constrained plan, not a
+verified incident allocation. See `docs/ASSUMPTIONS.md` for every demo value.
 
 ```json
 {

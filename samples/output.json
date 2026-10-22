@@ -1,28 +1,115 @@
 {
   "allocation": {
     "shelter": {
-      "boats": 1
-    },
-    "logistics": {
-      "boats": 1
+      "boats": 2
     },
     "medical": {
       "boats": 1
-    }
+    },
+    "logistics": {}
   },
   "justifications": {
-    "shelter": "Evacuation demand competes for limited boats. Score 234.000; rank 1. Requested boats=3, shelter_beds=312; awarded boats=1, shelter_beds=0; shortfall boats=2, shelter_beds=312. Trade-off: this award balances shelter's need against competing claims from logistics (score 104.000); medical (score 18.000).",
-    "logistics": "Supply delivery shares the constrained transport fleet. Score 104.000; rank 2. Requested boats=2, food_rations=312, water_liters=3120; awarded boats=1, food_rations=0, water_liters=0; shortfall boats=1, food_rations=312, water_liters=3120. Trade-off: this award balances logistics's need against competing claims from shelter (score 234.000); medical (score 18.000).",
-    "medical": "Urgent patient transfer has the highest acuity. Score 18.000; rank 3. Requested boats=2; awarded boats=1; shortfall boats=1. Trade-off: this award balances medical's need against competing claims from shelter (score 234.000); logistics (score 104.000)."
+    "shelter": "Score 431.429; rank 1. Requested boats=3, shelter_beds=312; awarded boats=2, shelter_beds=0; shortfall boats=1, shelter_beds=312. Trade-off: this award balances shelter's need against competing claims from medical (score 180.000); logistics (score 74.978).",
+    "medical": "Score 180.000; rank 2. Requested boats=2; awarded boats=1; shortfall boats=1. Trade-off: this award balances medical's need against competing claims from shelter (score 431.429); logistics (score 74.978).",
+    "logistics": "Score 74.978; rank 3. Requested boats=2, food_rations=312, water_liters=3120; awarded boats=0, food_rations=0, water_liters=0; shortfall boats=2, food_rations=312, water_liters=3120. Trade-off: this award balances logistics's need against competing claims from shelter (score 431.429); medical (score 180.000)."
   },
   "conflicts_resolved": [
-    "Shared resource demand exceeded inventory; awards were capped to available stock."
+    "Round cap reached with 4 boats unmet; unresolved claimants: medical, shelter, logistics.",
+    "Round cap reached with 312 shelter_beds unmet; unresolved claimants: shelter.",
+    "Round cap reached with 312 food_rations unmet; unresolved claimants: logistics.",
+    "Round cap reached with 3120 water_liters unmet; unresolved claimants: logistics."
   ],
   "replans": 0,
-  "rounds_used": 1,
+  "rounds_used": 3,
   "disputes_log": [
-    "medical request was reduced: {'boats': 1}.",
-    "shelter request was reduced: {'boats': 2, 'shelter_beds': 312}.",
-    "logistics request was reduced: {'boats': 1, 'food_rations': 312, 'water_liters': 3120}."
-  ]
+    "shelter: awarded 2 of 3 requested for boats (capped by Mediator from stock); awarded 0 of 312 requested for shelter_beds (capped by Mediator from stock).",
+    "medical: awarded 1 of 2 requested for boats (capped by Mediator from stock).",
+    "logistics: awarded 0 of 2 requested for boats (capped by Mediator from stock); awarded 0 of 312 requested for food_rations (capped by Mediator from stock); awarded 0 of 3120 requested for water_liters (capped by Mediator from stock)."
+  ],
+  "status": "constrained",
+  "unresolved_shortfalls": [
+    {
+      "resource": "boats",
+      "unmet_amount": 4,
+      "agents": [
+        "medical",
+        "shelter",
+        "logistics"
+      ]
+    },
+    {
+      "resource": "shelter_beds",
+      "unmet_amount": 312,
+      "agents": [
+        "shelter"
+      ]
+    },
+    {
+      "resource": "food_rations",
+      "unmet_amount": 312,
+      "agents": [
+        "logistics"
+      ]
+    },
+    {
+      "resource": "water_liters",
+      "unmet_amount": 3120,
+      "agents": [
+        "logistics"
+      ]
+    }
+  ],
+  "risks": [],
+  "feasibility_report": {
+    "checks_passed": [
+      "demand partitions are disjoint",
+      "allocation capped by inventory and useful unit cap"
+    ],
+    "checks_failed": [
+      "oversubscribed demand remains"
+    ],
+    "unresolved_shortfalls": [
+      {
+        "resource": "boats",
+        "unmet_amount": 4,
+        "agents": [
+          "medical",
+          "shelter",
+          "logistics"
+        ]
+      },
+      {
+        "resource": "shelter_beds",
+        "unmet_amount": 312,
+        "agents": [
+          "shelter"
+        ]
+      },
+      {
+        "resource": "food_rations",
+        "unmet_amount": 312,
+        "agents": [
+          "logistics"
+        ]
+      },
+      {
+        "resource": "water_liters",
+        "unmet_amount": 3120,
+        "agents": [
+          "logistics"
+        ]
+      }
+    ],
+    "unverified_assumptions": [
+      "hospital receiving capacity"
+    ],
+    "demand_totals": {
+      "critical_patients": 12,
+      "stranded_non_critical": 300,
+      "supply_dependent": 200,
+      "total_union": 512,
+      "overlaps": []
+    }
+  },
+  "reassessments": []
 }

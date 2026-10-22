@@ -54,6 +54,9 @@ Medical support is marked unverified when ICU or receiving-facility data is
 unknown; infeasible road or unavailable-boat fallback options are rejected.
 The final plan includes a feasibility report, and its explanations are checked
 against the numeric scores, ranks, requests, and awards before display.
+Preset events apply concrete scenario diffs, including hospital ICU and
+transfer-capacity changes. Replans that remain oversubscribed run one short
+challenge and log each affected agent's before/after reassessment reason.
 
 ## Demo script
 
@@ -63,11 +66,14 @@ against the numeric scores, ranks, requests, and awards before display.
    `Bridge to Zone A collapses, cutting all ground road access to Zone A.` and
    select **Inject event**. Review the new scenario facts, affected-agent
    refresh, and first-run versus replan allocation comparison.
-3. Enable **Simulate tool failure** in the sidebar, then enter the preset event
+3. Enter the hospital preset exactly as listed in `agents.scenario.PRESET_EVENTS`:
+   `Regional Hospital reaches full capacity; ICU beds exhausted.` Select
+   **Inject event** and confirm the hospital diff marks Medical as affected.
+4. Enable **Simulate tool failure** in the sidebar, then enter the preset event
    `Eight new critical patients arrive in Zone B.` and select **Inject event**.
    The transcript records failed tool calls; agents continue with uncertainty and
    fallback estimates, and a warning panel shows unavailable tool data.
-4. Disable **Simulate tool failure**. Download **Download trace** as
+5. Disable **Simulate tool failure**. Download **Download trace** as
    `trace_full_run.jsonl` and **Download final plan** as
    `output_full_run.json`, saving both into `samples/`. The preset event texts come from
    `agents.scenario.PRESET_EVENTS` (`bridge_collapse` and `new_casualties`).

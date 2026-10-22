@@ -213,6 +213,8 @@ def main() -> None:
             if before and before.get("allocation"):
                 st.markdown("**First run → replan**")
                 before_alloc, after_alloc = before["allocation"], plan["allocation"]
+                reassessment_reasons = {item.get("agent"): item.get("reason", "Updated after scenario event.")
+                                         for item in plan.get("reassessments", [])}
                 compare_rows = []
                 for agent in sorted(set(before_alloc) | set(after_alloc)):
                     resources = set(before_alloc.get(agent, {})) | set(after_alloc.get(agent, {}))
@@ -221,7 +223,8 @@ def main() -> None:
                         new = after_alloc.get(agent, {}).get(resource, 0)
                         compare_rows.append({"Agent": agent, "Resource": resource, "Before": old,
                                              "After": new, "Change": new - old,
-                                             "Reason": plan.get("justifications", {}).get(agent, "Updated after scenario event.")})
+                                             "Reason": reassessment_reasons.get(
+                                                 agent, plan.get("justifications", {}).get(agent, "Updated after scenario event."))})
                 st.dataframe(compare_rows, use_container_width=True, hide_index=True)
             counts = st.columns(3)
             counts[0].metric("Rounds", plan.get("rounds_used", 0))

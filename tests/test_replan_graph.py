@@ -24,9 +24,10 @@ def test_replan_requeries_only_affected_agent_and_updates_allocation(monkeypatch
         allocation={claim.agent: {"boats": min(claim.resources["boats"], state.scenario.resources["boats"])}
                     for claim in state.claims}, replans=state.replans))
     updated = graph.replan(original, "resource event", object(), tracer)
-    assert calls == ["medical"]
+    assert calls == ["medical", "medical"]  # affected agent also answers the challenge
     assert updated.plan.allocation["medical"]["boats"] == 2
     assert updated.replans == 1
+    assert any(event["type"] == "reassessment" for event in tracer.events)
 
 
 def test_replan_skips_when_event_rejected(monkeypatch, tracer):

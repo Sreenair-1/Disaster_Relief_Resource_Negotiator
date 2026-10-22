@@ -138,6 +138,7 @@ class Plan(BaseModel):
     unresolved_shortfalls: list[UnresolvedShortfall] = Field(default_factory=list)
     risks: list[str] = Field(default_factory=list)
     feasibility_report: dict[str, Any] = Field(default_factory=dict)
+    reassessments: list[dict[str, Any]] = Field(default_factory=list)
 
 
 class ScenarioDiff(BaseModel):

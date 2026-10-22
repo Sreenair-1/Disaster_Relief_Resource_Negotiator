@@ -153,6 +153,19 @@ def _apply_patch(scenario: Scenario, patch: ScenarioPatch) -> Scenario:
         current = new_scenario.resources.get(res_key, 0)
         new_scenario.resources[res_key] = max(0, current - abs(int(loss_count)))
 
+    # 6. Apply explicit receiving-facility changes.
+    for name, update in patch.hospital_capacity.items():
+        target = next((h for h in new_scenario.operations.hospitals
+                       if h.name.casefold() == name.casefold()), None)
+        if target is None:
+            continue
+        values = ({"icu_beds_free": 0, "accepts_transfers": False}
+                  if isinstance(update, str) and update.casefold() in {"full", "icu exhausted"}
+                  else update if isinstance(update, dict) else {})
+        for field in ("icu_beds_free", "accepts_transfers", "travel_hours"):
+            if field in values:
+                setattr(target, field, values[field])
+
     return new_scenario
 
 
@@ -183,9 +196,12 @@ def _diff_scenarios(before: Scenario, after: Scenario) -> ScenarioDiff:
     if before.resources != after.resources:
         changes["resources"] = {"before": dict(before.resources), "after": dict(after.resources)}
 
-    # Compare hospitals
-    if before.hospitals != after.hospitals:
-        changes["hospitals"] = {"before": list(before.hospitals), "after": list(after.hospitals)}
+    # Compare receiving-facility records, including old-format names.
+    if [h.model_dump() for h in before.operations.hospitals] != [h.model_dump() for h in after.operations.hospitals]:
+        changes["hospital_capacity"] = {
+            "before": [h.model_dump() for h in before.operations.hospitals],
+            "after": [h.model_dump() for h in after.operations.hospitals],
+        }
 
     return ScenarioDiff(changed_fields=changes)
 
@@ -222,6 +238,33 @@ def _patch_is_empty(patch: ScenarioPatch) -> bool:
     )
 
 
+def _preset_patch(state: NegotiationState, text: str) -> ScenarioPatch | None:
+    """Apply the documented demo presets with literal, reproducible deltas."""
+    if text == PRESET_EVENTS["bridge_collapse"]:
+        return ScenarioPatch(summary="Zone A ground access was cut.", road_access={"Zone A": 0.0},
+                             roads={"Zone A": "blocked"}, affected_agents=["medical", "shelter", "logistics"])
+    if text == PRESET_EVENTS["hospital_capacity"]:
+        return ScenarioPatch(summary="Regional Hospital ICU and transfer capacity are exhausted.",
+                             hospital_capacity={"Regional Hospital": "full"}, affected_agents=["medical"])
+    if text == PRESET_EVENTS["water_rising_fast"]:
+        changes = {z.name: min(z.population, z.stranded * 2) for z in state.scenario.zones}
+        return ScenarioPatch(summary="Stranded counts doubled, capped at zone population.",
+                             zone_stranded=changes, affected_agents=["shelter"])
+    if text == PRESET_EVENTS["new_casualties"]:
+        zone = next((z for z in state.scenario.zones if z.name.casefold() == "zone b"), None)
+        if zone:
+            return ScenarioPatch(summary="Eight critical patients were added in Zone B.",
+                                 zone_casualties={zone.name: zone.critical_patients + 8},
+                                 affected_agents=["medical"])
+    if text == PRESET_EVENTS["resource_loss"] and "boats" in state.scenario.resources:
+        return ScenarioPatch(summary="One boat was lost; fuel contamination noted.",
+                             resource_loss={"boats": 1}, affected_agents=["logistics", "medical", "shelter"])
+    if text == PRESET_EVENTS["road_blocked"]:
+        return ScenarioPatch(summary="Zone B road access was cut.", road_access={"Zone B": 0.0},
+                             roads={"Zone B": "blocked"}, affected_agents=["logistics", "medical", "shelter"])
+    return None
+
+
 def _build_user_message(state: NegotiationState, text: str) -> str:
     """Compose user prompt for LLM evaluation of incoming scenario event."""
     zones_summary = [
@@ -233,7 +276,7 @@ def _build_user_message(state: NegotiationState, text: str) -> str:
         f"Disaster type: {state.scenario.disaster_type}\n"
         f"Resources: {state.scenario.resources}\n"
         f"Road conditions: {state.scenario.roads}\n"
-        f"Hospitals: {state.scenario.hospitals}\n"
+        f"Hospitals: {[h.model_dump() for h in state.scenario.operations.hospitals]}\n"
         f"Zones: {zones_summary}\n"
         f"Incoming event text: \"{text}\"\n\n"
         "Evaluate this event against the disaster context. If it is nonsense, humor, or unrelated, "
@@ -302,7 +345,7 @@ def inject_event(
     system_msg = _system_prompt()
     user_msg = _build_user_message(state, cleaned)
 
-    patch = llm.complete_json(system_msg, user_msg, ScenarioPatch)
+    patch = _preset_patch(state, cleaned) or llm.complete_json(system_msg, user_msg, ScenarioPatch)
 
     if not patch.is_valid:
         tracer.log(

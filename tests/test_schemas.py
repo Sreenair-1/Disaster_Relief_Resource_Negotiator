@@ -28,3 +28,11 @@ def test_hospital_objects_are_accepted_in_operations():
     })
     assert scenario.hospitals == ["Hospital"]
     assert scenario.operations.hospitals[0].icu_beds_free == 2
+def test_sample_json_files_validate_against_current_contract():
+    import json
+    from pathlib import Path
+    from lib.schemas import Plan, Scenario
+
+    root = Path(__file__).parents[1]
+    Scenario.model_validate(json.loads((root / "samples/input.json").read_text(encoding="utf-8")))
+    Plan.model_validate(json.loads((root / "samples/output.json").read_text(encoding="utf-8")))

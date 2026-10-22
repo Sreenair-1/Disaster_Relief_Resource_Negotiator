@@ -25,3 +25,9 @@ verified operational data and must not be presented as field measurements.
 - When equally scored claims compete for insufficient stock, the split is
   proportional to each claim's useful unit cap; largest remainders follow the
   existing urgency, time-window, agent tie-break.
+- The illustrative `samples/output.json` uses Medical's sample claim of 12
+  people, urgency 10, a two-hour window, and 2 boats; Shelter's 300 people,
+  urgency 9, a six-hour window, 3 boats, and 312 beds; and Logistics' 200
+  people, urgency 9, a twelve-hour window, 2 boats, 312 food rations, and 3120
+  liters of water. These are demo claim inputs, not verified field data; the
+  generated plan is not operational or field-verified.
