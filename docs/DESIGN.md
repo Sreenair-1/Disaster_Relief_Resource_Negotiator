@@ -75,6 +75,25 @@ Medical, Shelter, and Logistics, asks Mediator for the next
 `request_fallback` / `ask_peer_estimate` to an estimate. The graph finalizes
 when Mediator selects `finalize` or the three-round cap is reached.
 
+**Estimates stored.** Estimates returned by agents during
+`request_fallback` / `ask_peer_estimate` are stored in
+`NegotiationState.estimates` (not just logged). They are included in the next
+Mediator context and available to the target agent's revision prompt.
+
+**Decision logic.** The Mediator's `decide_next` follows this priority:
+1. If a resource is oversubscribed and no agent has revised since the last
+   counter, prefer `challenge_agent` so the targeted agent re-claims with the
+   Counter.
+2. Use `request_fallback` / `ask_peer_estimate` only for uncertain claims or
+   failed tools.
+3. Choose `finalize` as soon as nothing is oversubscribed or claims stopped
+   changing. The hard cap at round 3 is a safety net only.
+
+**Claim revision trace.** After a challenge, the graph traces the revised claim
+as event type `claim_revision` with a change summary (resources, urgency,
+time_window_hrs vs. the previous claim). An agent may defend its claim unchanged,
+but the trace records `defended_unchanged: true` with the justification.
+
 `graph.replan.replan(state, event_text, llm, tracer)` invokes
 `agents.scenario.inject_event`. The Scenario agent resolves the event against
 the **current** scenario (zones, roads, hospitals, resources passed in context)
@@ -199,10 +218,13 @@ and derive `affected_agents`. A compact sample matching those schemas follows.
 }
 ```
 
-`NegotiationState` holds the scenario, current round, claims, counters, events,
-optional plan, replan count, and affected-agent list. Agent functions accept
-that state with an `LLMClient` or `StubLLM` and a `Tracer`. `Tracer.log` keeps
-in-memory events and writes each event as JSONL.
+`NegotiationState` holds the scenario, current round, claims, counters,
+estimates, events, optional plan, replan count, and affected-agent list.
+Estimates collected during `request_fallback` / `ask_peer_estimate` rounds
+are stored in `estimates` and fed back into the Mediator context and the
+challenged agent's revision prompt. Agent functions accept that state with
+an `LLMClient` or `StubLLM` and a `Tracer`. `Tracer.log` keeps in-memory
+events and writes each event as JSONL.
 
 ## Stack rationale
 

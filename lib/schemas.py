@@ -79,6 +79,7 @@ class NegotiationState(BaseModel):
     round: int = 0
     claims: list[Claim] = Field(default_factory=list)
     counters: list[Counter] = Field(default_factory=list)
+    estimates: list[Estimate] = Field(default_factory=list)
     events: list[str] = Field(default_factory=list)
     plan: Plan | None = None
     replans: int = 0

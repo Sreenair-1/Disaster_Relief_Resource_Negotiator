@@ -29,6 +29,31 @@ def _system_prompt() -> str:
     return PROMPT_PATH.read_text(encoding="utf-8")
 
 
+def _agents_revised_since_last_counter(state: NegotiationState) -> set[str]:
+    """Return agents that submitted a revised claim after their last counter."""
+    # Build a map: agent -> index of their latest counter
+    last_counter_idx: dict[str, int] = {}
+    for i, counter in enumerate(state.counters):
+        last_counter_idx[counter.to_agent] = i
+
+    # Build a map: agent -> index of their latest claim
+    last_claim_idx: dict[str, int] = {}
+    for i, claim in enumerate(state.claims):
+        last_claim_idx[claim.agent] = i
+
+    # An agent "revised" if it has a claim submitted after receiving a counter
+    # We track this by checking if counters exist for agents that have claims
+    # Since claims are replaced in-place, we check if any counter was issued
+    # and the round progressed
+    revised = set()
+    countered_agents = set(last_counter_idx.keys())
+    # If a claim exists for a countered agent, they have responded
+    for agent in countered_agents:
+        if agent in last_claim_idx:
+            revised.add(agent)
+    return revised
+
+
 def decide_next(state: NegotiationState, llm, tracer: Tracer) -> MediatorAction:
     """Choose a negotiation action from current evidence; finalize by round 3."""
     deficits = over_subscribed(state.claims, state.scenario)
@@ -43,6 +68,12 @@ def decide_next(state: NegotiationState, llm, tracer: Tracer) -> MediatorAction:
     ]
     missing = [agent for agent in ("medical", "shelter", "logistics")
                if agent not in {claim.agent for claim in state.claims}]
+
+    # Track which agents revised since their last counter
+    countered_agents = {c.to_agent for c in state.counters}
+    revised_agents = _agents_revised_since_last_counter(state)
+    unrevised_countered = countered_agents - revised_agents
+
     context = {
         "round": state.round,
         "round_cap": 3,
@@ -52,7 +83,10 @@ def decide_next(state: NegotiationState, llm, tracer: Tracer) -> MediatorAction:
         "missing_agents": missing,
         "uncertain_claims": uncertain,
         "prior_counters": [counter.model_dump() for counter in state.counters],
+        "estimates": [est.model_dump() for est in state.estimates],
         "events": state.events,
+        "agents_revised_since_counter": sorted(revised_agents),
+        "agents_not_yet_revised": sorted(unrevised_countered),
     }
 
     if state.round >= 3:

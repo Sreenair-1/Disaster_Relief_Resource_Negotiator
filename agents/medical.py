@@ -78,6 +78,15 @@ def _build_user_message(
             "Defend with evidence or revise if the evidence supports it."
         )
 
+    # Stored estimates context
+    if state.estimates:
+        parts.append("Stored estimates and telemetry feedback:")
+        for est in state.estimates:
+            parts.append(
+                f"  From {est.agent}: {est.question} -> {est.value} "
+                f"(confidence={est.confidence}, rationale=\"{est.rationale}\")"
+            )
+
     # Existing claims in this round (for context)
     if state.claims:
         parts.append(f"Existing claims this round: {len(state.claims)}")

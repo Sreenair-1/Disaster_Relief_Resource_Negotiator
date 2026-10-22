@@ -52,16 +52,44 @@ def _mediate(ctx: _GraphState) -> _GraphState:
     return {**ctx, "action": action, "next_agent": target}
 
 
+def _claim_change_summary(old_claim, new_claim) -> dict[str, Any]:
+    """Compute a change summary between previous and revised claims."""
+    changes: dict[str, Any] = {}
+    if old_claim.resources != new_claim.resources:
+        changes["resources"] = {"before": old_claim.resources, "after": new_claim.resources}
+    if old_claim.urgency != new_claim.urgency:
+        changes["urgency"] = {"before": old_claim.urgency, "after": new_claim.urgency}
+    if old_claim.time_window_hrs != new_claim.time_window_hrs:
+        changes["time_window_hrs"] = {"before": old_claim.time_window_hrs, "after": new_claim.time_window_hrs}
+    if old_claim.people_affected != new_claim.people_affected:
+        changes["people_affected"] = {"before": old_claim.people_affected, "after": new_claim.people_affected}
+    if old_claim.uncertainty != new_claim.uncertainty:
+        changes["uncertainty"] = {"before": old_claim.uncertainty, "after": new_claim.uncertainty}
+    return changes
+
+
 def _challenge(ctx: _GraphState) -> _GraphState:
     state = ctx["state"].model_copy(deep=True)
     agent = ctx["next_agent"]
     if agent in CLAIMERS:
         index = next((i for i, claim in enumerate(state.claims) if claim.agent == agent), None)
+        old_claim = state.claims[index] if index is not None else None
         revision = CLAIMERS[agent](state, ctx["llm"], ctx["tracer"], _counter_for(state, agent))
         if index is None:
             state.claims.append(revision)
         else:
             state.claims[index] = revision
+
+        # Trace the revised claim with a change summary
+        changes = _claim_change_summary(old_claim, revision) if old_claim else {}
+        defended_unchanged = not changes
+        ctx["tracer"].log(agent, "mediator", "claim_revision", {
+            "agent": agent,
+            "changes": changes,
+            "defended_unchanged": defended_unchanged,
+            "justification": revision.justification,
+            "revised_claim": revision.model_dump(),
+        })
     state.round += 1
     return {**ctx, "state": state, "action": None}
 
@@ -72,6 +100,7 @@ def _fallback(ctx: _GraphState) -> _GraphState:
     target = ctx["next_agent"]
     if target in ESTIMATORS and counter:
         estimate = ESTIMATORS[target](state, counter.question, ctx["llm"], ctx["tracer"])
+        state.estimates.append(estimate)
         ctx["tracer"].log("mediator", target, "fallback_estimate", estimate.model_dump())
     state.round += 1
     return {**ctx, "state": state, "action": None}
