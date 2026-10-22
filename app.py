@@ -88,10 +88,17 @@ def main() -> None:
 
     with st.sidebar:
         st.header("Scenario")
-        uploaded = st.file_uploader("Load scenario JSON", type=["json"])
+        if "scenario_editor" not in st.session_state:
+            st.session_state.scenario_editor = scenario_json()
+
+        uploaded = st.file_uploader("Load scenario JSON", type=["json"], key="scenario_upload")
         if uploaded is not None:
-            st.session_state.scenario_json = uploaded.getvalue().decode("utf-8")
-        raw = st.text_area("Edit scenario JSON", value=scenario_json(), height=360, key="scenario_editor")
+            uploaded_text = uploaded.getvalue().decode("utf-8")
+            if uploaded_text != st.session_state.get("last_scenario_upload"):
+                st.session_state.scenario_editor = uploaded_text
+                st.session_state.last_scenario_upload = uploaded_text
+
+        raw = st.text_area("Edit scenario JSON", height=360, key="scenario_editor")
         st.session_state.scenario_json = raw
         valid_scenario = None
         try:

@@ -20,6 +20,20 @@ def test_app_renders_scenario_controls_and_invalid_json_message(monkeypatch):
     assert any("Invalid scenario JSON or fields" in item.value for item in app.error)
 
 
+def test_uploaded_scenario_replaces_editor_contents(monkeypatch):
+    root = Path(__file__).parents[1]
+    monkeypatch.chdir(root)
+    app = AppTest.from_file(str(root / "app.py"), default_timeout=10).run()
+    uploaded = (root / "samples" / "input.json").read_bytes()
+
+    app.file_uploader[0].set_value(("uploaded-scenario.json", uploaded, "application/json")).run()
+
+    editor = next(area for area in app.text_area if area.label == "Edit scenario JSON")
+    assert '"Zone A"' in editor.value
+    assert '"Zone B"' in editor.value
+    assert any("Scenario is valid" in item.value for item in app.success)
+
+
 def test_runner_smoke_with_stub_llm(monkeypatch, sample_scenario):
     import graph.negotiation as graph
     from ui.runner import run_negotiation
