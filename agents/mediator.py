@@ -462,6 +462,8 @@ def finalize(state: NegotiationState, llm, tracer: Tracer) -> Plan:
         disputes_log=disputes,
         status=status,
         unresolved_shortfalls=unresolved,
+        risks=[f"{claim.agent}: medical receiving support is unverified or insufficient"
+               for claim in state.claims if claim.unverified_support],
     )
     tracer.log("mediator", "system", "plan", plan.model_dump())
     return plan

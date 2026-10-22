@@ -23,9 +23,10 @@ def _system_prompt() -> str:
 def _gather_tool_data(
     state: NegotiationState, tracer: Tracer
 ) -> tuple[dict[str, Any], bool, list[str]]:
-    """Call hospital_capacity and casualty_estimate via shared telemetry gatherer."""
+    """Call hospital, receiving-facility, transport and casualty tools."""
     return gather_tool_telemetry(
-        state.scenario, ["hospital_capacity", "casualty_estimate"], tracer
+        state.scenario, ["hospital_capacity", "receiving_capacity", "transport_options",
+                         "casualty_estimate"], tracer
     )
 
 
@@ -64,6 +65,10 @@ def _build_user_message(
         parts.append(
             f"WARNING – casualty_estimate tool failed: {tool_data['casualty_estimate_error']}"
         )
+
+    for name in ("receiving_capacity", "transport_options"):
+        if name in tool_data:
+            parts.append(f"{name} data: {tool_data[name]}")
 
     if tool_failed:
         parts.append(
@@ -136,6 +141,32 @@ def make_claim(
 
     # Handle tool failure: state uncertainty explicitly and offer fallback_estimate
     claim = handle_tool_failure(claim, "medical", state.scenario, tool_failed, failed_tools)
+
+    critical = sum(z.critical_patients for z in state.scenario.zones)
+    facilities = state.scenario.operations.hospitals
+    known_capacity = sum(h.icu_beds_free or 0 for h in facilities if h.icu_beds_free is not None)
+    accepting = any(h.accepts_transfers is True for h in facilities)
+    unverified = (not facilities or any(h.icu_beds_free is None or h.accepts_transfers is None
+                                        for h in facilities))
+    unsupported = known_capacity < critical and not accepting
+    if unsupported:
+        claim = claim.model_copy(update={"unverified_support": True,
+                                         "uncertainty": claim.uncertainty or 0.5})
+    elif unverified:
+        claim = claim.model_copy(update={"unverified_support": True,
+                                         "uncertainty": claim.uncertainty or 0.5})
+
+    fallback = claim.fallback_option.casefold()
+    blocked_ground = any(z.road_access <= 0 for z in state.scenario.zones)
+    unavailable_boats = state.scenario.resources.get("boats", 0) <= 0
+    invalid_fallback = ((any(word in fallback for word in ("road", "ground", "ambulance")) and blocked_ground)
+                        or ("boat" in fallback and unavailable_boats))
+    if invalid_fallback:
+        tracer.log("medical", "mediator", "fallback_rejected", {
+            "fallback_option": claim.fallback_option,
+            "reason": "fallback uses a blocked ground route or unavailable boats",
+        })
+        claim = claim.model_copy(update={"fallback_option": "No verified feasible fallback transport is available."})
 
     tracer.log("medical", "mediator", "claim", claim.model_dump())
     return claim

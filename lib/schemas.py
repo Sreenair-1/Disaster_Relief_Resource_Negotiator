@@ -85,6 +85,7 @@ class Claim(BaseModel):
     justification: str
     fallback_option: str
     uncertainty: float | None = Field(default=None, ge=0, le=1)
+    unverified_support: bool = False
 
 
 class Counter(BaseModel):
@@ -135,6 +136,7 @@ class Plan(BaseModel):
     disputes_log: list[str] = Field(default_factory=list)
     status: str = "resolved"
     unresolved_shortfalls: list[UnresolvedShortfall] = Field(default_factory=list)
+    risks: list[str] = Field(default_factory=list)
 
 
 class ScenarioDiff(BaseModel):

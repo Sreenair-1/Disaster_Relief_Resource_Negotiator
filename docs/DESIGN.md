@@ -87,6 +87,11 @@ round trips within the response window; ground fallbacks are infeasible when
 useful units. These checks report unknowns as unverified, never as confirmed
 capacity.
 
+Medical also queries `receiving_capacity` and `transport_options`. Missing ICU
+or transfer-acceptance data marks support unverified; known ICU shortfall with
+no accepting facility raises a plan risk. Fallbacks naming blocked ground
+access or unavailable boats are rejected and traced.
+
 ## Orchestration and replanning
 
 `graph.negotiation.run_negotiation(scenario, llm, tracer)` collects claims from

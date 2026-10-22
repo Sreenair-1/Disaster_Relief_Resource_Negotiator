@@ -50,6 +50,8 @@ the plan is marked `constrained` and reports unresolved resource shortfalls.
 Allocation ranks severity-weighted, time-sensitive claims, respects known
 feasibility caps, and splits stock proportionally only within tied priority
 tiers. Severity weights are documented model assumptions.
+Medical support is marked unverified when ICU or receiving-facility data is
+unknown; infeasible road or unavailable-boat fallback options are rejected.
 
 ## Demo script
 

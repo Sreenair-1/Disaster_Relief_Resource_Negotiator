@@ -8,7 +8,7 @@ from tools.failure import (
     set_random_mode,
     set_timeout_mode,
 )
-from tools.hospital import hospital_capacity
+from tools.hospital import hospital_capacity, receiving_capacity, transport_options
 from tools.inventory import stock_levels, vehicle_inventory
 from tools.population import zone_population
 from tools.registry import TOOLS
@@ -18,6 +18,8 @@ from tools.shelter import shelter_capacity
 __all__ = [
     "TOOLS",
     "hospital_capacity",
+    "receiving_capacity",
+    "transport_options",
     "casualty_estimate",
     "shelter_capacity",
     "zone_population",

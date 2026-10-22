@@ -80,3 +80,36 @@ def hospital_capacity(
         "total_available_beds": sum(h["available_beds"] for h in hospitals_info),
         "total_icu_available": sum(h["icu_available"] for h in hospitals_info),
     }
+
+
+def receiving_capacity(scenario: Scenario | dict[str, Any], hospital: str | None = None, **kw):
+    """Return explicit receiving-facility transfer/ICU data; unknown stays unknown."""
+    check_failure("receiving_capacity")
+    sc = normalize_scenario(scenario)
+    target = hospital or kw.get("hospital_name") or kw.get("name")
+    facilities = [h for h in sc.operations.hospitals
+                  if target is None or h.name.casefold() == target.casefold()]
+    if target and not facilities:
+        raise get_tool_error()(f"Hospital '{target}' not found in scenario.")
+    return {"hospitals": [h.model_dump() for h in facilities],
+            "verified": bool(facilities) and all(
+                h.icu_beds_free is not None and h.accepts_transfers is not None
+                for h in facilities)}
+
+
+def transport_options(scenario: Scenario | dict[str, Any], zone: str | None = None, **kw):
+    """Report only transports supported by explicit scenario fields/inventory."""
+    check_failure("transport_options")
+    sc = normalize_scenario(scenario)
+    target = zone or kw.get("zone_name")
+    zones = [z for z in sc.zones if target is None or z.name.casefold() == target.casefold()]
+    return {"options": [{
+        "zone": z.name,
+        "ground_feasible": z.road_access > 0,
+        "ground_access": z.road_access,
+        "boats_available": sc.resources.get("boats", 0),
+        "boat_capacity_persons": sc.operations.boat_capacity_persons,
+        "round_trip_hours": sc.operations.trip_hours_by_zone.get(z.name),
+        "ambulance_capacity": sc.operations.ambulance_capacity,
+        "verified": z.road_access is not None,
+    } for z in zones]}

@@ -57,7 +57,23 @@ def test_initial_claim_is_valid(neg_state, tracer):
     assert claim.time_window_hrs == 2.0
     assert len(claim.justification) > 0
     assert len(claim.fallback_option) > 0
-    assert claim.uncertainty is None  # tools succeeded
+    assert claim.uncertainty == 0.5  # receiving-facility details are unknown
+    assert claim.unverified_support is True
+
+
+def test_insufficient_icu_and_blocked_fallback_are_reported(neg_state, tracer):
+    from lib.schemas import Hospital
+    neg_state.scenario.zones[0].road_access = 0
+    neg_state.scenario.operations.hospitals = [Hospital(
+        name="Regional Hospital", icu_beds_free=0, accepts_transfers=False,
+        travel_hours=None,
+    )]
+    response = _initial_claim_response()
+    response["fallback_option"] = "Ambulance convoy via ground route."
+    claim = make_claim(neg_state, StubLLM([response]), tracer)
+    assert claim.unverified_support is True
+    assert "No verified feasible" in claim.fallback_option
+    assert any(event["type"] == "fallback_rejected" for event in tracer.events)
 
 
 def test_claim_enforces_medical_agent(neg_state, tracer):
