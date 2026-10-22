@@ -40,3 +40,21 @@ def test_graph_routes_fallback(monkeypatch, tracer):
     state = graph.run_negotiation(scenario, StubLLM(), tracer)
     assert state.plan is not None
     assert any(event["type"] == "fallback_estimate" for event in tracer.events)
+
+
+def test_claim_demand_partition_and_clamp_are_traced(monkeypatch, tracer):
+    import graph.negotiation as graph
+
+    def claim(agent):
+        return lambda *args, **kwargs: _claim(agent, resources={}, uncertainty=0)
+
+    monkeypatch.setattr(graph, "CLAIMERS", {
+        agent: claim(agent) for agent in ("medical", "shelter", "logistics")
+    })
+    monkeypatch.setattr(graph, "decide_next", lambda *args: MediatorAction.finalize)
+    monkeypatch.setattr(graph, "mediator_finalize", lambda state, llm, tracer: Plan())
+    scenario = Scenario(disaster_type="flood", zones=[Zone(name="A", population=1)])
+    graph.run_negotiation(scenario, StubLLM(), tracer)
+
+    assert any(event["type"] == "demand_partition" for event in tracer.events)
+    assert any(event["type"] == "claim_demand_clamped" for event in tracer.events)

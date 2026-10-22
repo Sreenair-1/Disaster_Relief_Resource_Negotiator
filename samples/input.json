@@ -1,10 +1,16 @@
 {
   "disaster_type": "flood",
   "zones": [
-    {"name": "Zone A", "population": 500, "stranded": 300, "critical_patients": 0, "road_access": 0.5},
-    {"name": "Zone B", "population": 120, "stranded": 12, "critical_patients": 12, "road_access": 0.3}
+    {"name": "Zone A", "population": 500, "stranded": 300, "critical_patients": 0, "road_access": 0.5, "supply_dependent": 150},
+    {"name": "Zone B", "population": 120, "stranded": 12, "critical_patients": 12, "road_access": 0.3, "supply_dependent": 50}
   ],
   "resources": {"boats": 3},
   "hospitals": ["Regional Hospital"],
-  "roads": {"Zone A": "blocked", "Zone B": "flooded"}
+  "roads": {"Zone A": "blocked", "Zone B": "flooded"},
+  "operations": {
+    "boat_capacity_persons": 50,
+    "trip_hours_by_zone": {"Zone A": 2.0, "Zone B": 2.0},
+    "ambulance_capacity": 2,
+    "hospitals": [{"name": "Regional Hospital"}]
+  }
 }

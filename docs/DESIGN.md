@@ -67,6 +67,26 @@ tools are `hospital_capacity`, `casualty_estimate`, `shelter_capacity`,
 Agents record unavailable telemetry, set claim uncertainty, and retain a
 baseline fallback estimate.
 
+`lib.feasibility` partitions each zone's population into critical patients,
+stranded non-critical residents, and other supply-dependent residents. The
+groups are mutually exclusive: critical people are removed from the stranded
+group, and supply-dependent people are capped to the remaining population.
+Claims are clamped to their agent's partition; any requested overlap is
+recorded as a `claim_demand_clamped` trace event. The reported total demand is
+the union of these groups. Older scenarios without a `supply_dependent` value
+use the remaining unclassified population for that group, which is an explicit
+model assumption rather than verified field data.
+
+The scenario's `operations` schema carries optional boat capacity, round-trip
+hours by zone, ambulance capacity, and hospital facility objects. Missing
+capacity and facility values remain `None` and are treated as unverified.
+Legacy `hospitals: ["name"]` inputs remain valid and normalize into facility
+objects with unknown capacity and transfer status. `boats_needed` uses whole
+round trips within the response window; ground fallbacks are infeasible when
+`road_access` is zero. `unit_cap` limits known resource awards to the maximum
+useful units. These checks report unknowns as unverified, never as confirmed
+capacity.
+
 ## Orchestration and replanning
 
 `graph.negotiation.run_negotiation(scenario, llm, tracer)` collects claims from
@@ -188,8 +208,8 @@ stateDiagram-v2
 ## Contracts and samples
 
 The Pydantic models in `lib/schemas.py` are the shared I/O contracts:
-`Zone`, `Scenario`, `Claim`, `Counter`, `Estimate`, `MediatorAction`, `Plan`,
-`ScenarioDiff`, and `NegotiationState`. The Scenario agent additionally
+`Zone`, `Hospital`, `Operations`, `Scenario`, `Claim`, `Counter`, `Estimate`,
+`MediatorAction`, `Plan`, `ScenarioDiff`, and `NegotiationState`. The Scenario agent additionally
 validates a `ScenarioPatch` and computes a `ScenarioDiff` to detect no-ops
 and derive `affected_agents`. A compact sample matching those schemas follows.
 
@@ -198,12 +218,18 @@ and derive `affected_agents`. A compact sample matching those schemas follows.
   "scenario": {
     "disaster_type": "flood",
     "zones": [
-      {"name": "Zone A", "population": 500, "stranded": 300, "critical_patients": 0, "road_access": 0.5},
-      {"name": "Zone B", "population": 120, "stranded": 12, "critical_patients": 12, "road_access": 0.3}
+      {"name": "Zone A", "population": 500, "stranded": 300, "critical_patients": 0, "road_access": 0.5, "supply_dependent": 150},
+      {"name": "Zone B", "population": 120, "stranded": 12, "critical_patients": 12, "road_access": 0.3, "supply_dependent": 50}
     ],
     "resources": {"boats": 3},
     "hospitals": ["Regional Hospital"],
-    "roads": {"Zone A": "blocked", "Zone B": "flooded"}
+    "roads": {"Zone A": "blocked", "Zone B": "flooded"},
+    "operations": {
+      "boat_capacity_persons": 50,
+      "trip_hours_by_zone": {"Zone A": 2.0, "Zone B": 2.0},
+      "ambulance_capacity": 2,
+      "hospitals": [{"name": "Regional Hospital"}]
+    }
   },
   "claim": {
     "agent": "medical", "resources": {"boats": 2}, "people_affected": 12,

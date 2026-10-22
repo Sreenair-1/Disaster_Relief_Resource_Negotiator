@@ -28,6 +28,9 @@ available model and leave `OPENAI_BASE_URL` blank. Never commit a real key.
 Without one, the UI shows a setup message. The graph can also be called with
 `StubLLM` for deterministic development tests.
 
+Operational capacities and demo population splits are explicit assumptions,
+not verified field data; see [docs/ASSUMPTIONS.md](docs/ASSUMPTIONS.md).
+
 ## Run
 
 ```powershell

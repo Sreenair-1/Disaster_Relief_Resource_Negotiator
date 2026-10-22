@@ -33,7 +33,8 @@ def _oversubscribed_state():
     """3 boats total, 2+2 requested → oversubscribed."""
     scenario = Scenario(
         disaster_type="flood",
-        zones=[Zone(name="Zone A", population=500, stranded=300, road_access=0.5)],
+        zones=[Zone(name="Zone A", population=500, stranded=300,
+                    critical_patients=20, road_access=0.5)],
         resources={"boats": 3},
     )
     return NegotiationState(
@@ -47,7 +48,8 @@ def _balanced_state():
     """3 boats total, 1+1 requested → NOT oversubscribed."""
     scenario = Scenario(
         disaster_type="flood",
-        zones=[Zone(name="Zone A", population=500, stranded=300, road_access=0.5)],
+        zones=[Zone(name="Zone A", population=500, stranded=300,
+                    critical_patients=20, road_access=0.5)],
         resources={"boats": 3},
     )
     return NegotiationState(

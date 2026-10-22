@@ -7,6 +7,7 @@ from agents.mediator import finalize as mediator_finalize
 from agents.medical import make_claim as medical_claim
 from agents.scenario import inject_event
 from agents.shelter import make_claim as shelter_claim
+from lib.feasibility import demand_totals, validate_claim_demand
 from lib.schemas import NegotiationState
 
 CLAIMERS = {"medical": medical_claim, "shelter": shelter_claim, "logistics": logistics_claim}
@@ -25,6 +26,8 @@ def replan(state: NegotiationState, event_text: str, llm: Any, tracer: Any) -> N
     if not updated.affected_agents:
         return updated
 
+    tracer.log("feasibility", "mediator", "demand_partition", demand_totals(updated.scenario))
+
     updated.replans += 1
 
     # Extend affected agents: if road_access changed for a zone, include
@@ -35,7 +38,15 @@ def replan(state: NegotiationState, event_text: str, llm: Any, tracer: Any) -> N
     for agent in updated.affected_agents:
         make_claim = CLAIMERS.get(agent)
         if make_claim:
-            existing[agent] = make_claim(updated, llm, tracer)
+            claim = make_claim(updated, llm, tracer)
+            checked = validate_claim_demand(claim, updated.scenario)
+            existing[agent] = checked.claim
+            if checked.requested_people != checked.eligible_people:
+                tracer.log(agent, "mediator", "claim_demand_clamped", {
+                    "requested_people": checked.requested_people,
+                    "eligible_people": checked.eligible_people,
+                    "overlaps": list(checked.overlaps),
+                })
     updated.claims = list(existing.values())
     updated.plan = mediator_finalize(updated, llm, tracer)
     return updated

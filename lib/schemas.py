@@ -1,7 +1,7 @@
 from enum import Enum
 from typing import Any
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, model_validator
 
 
 class Zone(BaseModel):
@@ -10,6 +10,31 @@ class Zone(BaseModel):
     stranded: int = Field(default=0, ge=0)
     critical_patients: int = Field(default=0, ge=0)
     road_access: float = Field(default=1.0, ge=0, le=1)
+    supply_dependent: int | None = Field(default=None, ge=0)
+
+
+class Hospital(BaseModel):
+    """Receiving-facility fields; None means the value is unverified."""
+
+    name: str
+    icu_beds_free: int | None = Field(default=None, ge=0)
+    accepts_transfers: bool | None = None
+    travel_hours: float | None = Field(default=None, gt=0)
+
+
+class Operations(BaseModel):
+    """Transport capacities and route times used by deterministic checks."""
+
+    boat_capacity_persons: int | None = Field(default=None, gt=0)
+    trip_hours_by_zone: dict[str, float] = Field(default_factory=dict)
+    ambulance_capacity: int | None = Field(default=None, ge=0)
+    hospitals: list[Hospital] = Field(default_factory=list)
+
+    @model_validator(mode="after")
+    def validate_trip_times(self):
+        if any(hours <= 0 for hours in self.trip_hours_by_zone.values()):
+            raise ValueError("trip hours by zone must be positive")
+        return self
 
 
 class Scenario(BaseModel):
@@ -18,6 +43,37 @@ class Scenario(BaseModel):
     resources: dict[str, int] = Field(default_factory=dict)
     hospitals: list[str] = Field(default_factory=list)
     roads: dict[str, Any] = Field(default_factory=dict)
+    operations: Operations = Field(default_factory=Operations)
+
+    @model_validator(mode="before")
+    @classmethod
+    def normalize_hospitals(cls, value):
+        """Accept legacy name lists and normalize facility objects."""
+        if not isinstance(value, dict):
+            return value
+        data = dict(value)
+        operations = dict(data.get("operations") or {})
+        operation_hospitals = operations.get("hospitals")
+        legacy_hospitals = data.get("hospitals")
+
+        if legacy_hospitals is not None:
+            if legacy_hospitals and isinstance(legacy_hospitals[0], dict):
+                operation_hospitals = legacy_hospitals
+                data["hospitals"] = [item.get("name", "") for item in legacy_hospitals]
+            else:
+                operation_hospitals = operation_hospitals or [
+                    {"name": name} for name in legacy_hospitals
+                ]
+        elif operation_hospitals:
+            data["hospitals"] = [
+                item if isinstance(item, str) else item.get("name", "")
+                for item in operation_hospitals
+            ]
+
+        operations["hospitals"] = operation_hospitals or []
+        data["operations"] = operations
+        data.setdefault("hospitals", [])
+        return data
 
 
 class Claim(BaseModel):
