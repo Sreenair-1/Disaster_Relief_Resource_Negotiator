@@ -76,10 +76,39 @@ Medical, Shelter, and Logistics, asks Mediator for the next
 when Mediator selects `finalize` or the three-round cap is reached.
 
 `graph.replan.replan(state, event_text, llm, tracer)` invokes
-`agents.scenario.inject_event`. The Scenario agent patches a deep copy of the
-scenario and sets `affected_agents`; replan refreshes only those agents' claims,
-keeps all other claims, increments `replans`, and asks Mediator to allocate
-again. The UI compares this plan with the first run.
+`agents.scenario.inject_event`. The Scenario agent resolves the event against
+the **current** scenario (zones, roads, hospitals, resources passed in context)
+and must output concrete numeric deltas. If the event names no specific zone,
+the agent applies it to every zone it plausibly affects and explains this in the
+summary.
+
+**Patch validation, diff, and retry.** After receiving a `ScenarioPatch`, the
+agent applies the patch to a deep copy of the scenario and computes a
+`ScenarioDiff` (`lib/schemas.py`). If the patch has empty mutation fields or the
+resulting diff is empty (nothing actually changed), the agent retries the event
+generation once with an explicit instruction to produce concrete, effective
+changes. If the second attempt still produces no actual change, the event is
+rejected with `is_valid=false` and the reason `"event had no effect on the
+scenario"`. A UI warning is shown, and no-ops are never reported as successful
+replans.
+
+**Derived affected agents.** `affected_agents` is derived from the fields that
+actually changed in the diff, not solely from the LLM's guess:
+- `road_access` or `roads` change → `logistics`, `medical`, `shelter`
+- `critical_patients` or `hospital_capacity` change → `medical`
+- `stranded` change → `shelter`
+- `resources` change → all agents
+
+When road access changes for a zone, every agent whose existing claim references
+that zone is also added so they re-claim with updated conditions.
+
+**Trace.** A successful patch logs an `event_applied` trace event containing the
+patch, the `ScenarioDiff`, and the derived `affected_agents`.
+
+Replan refreshes only affected agents' claims, keeps all other claims,
+increments `replans`, and asks Mediator to allocate again. If the event was
+rejected (no affected agents), replan returns the unmodified state without
+incrementing `replans`. The UI compares this plan with the first run.
 
 Allocation and negotiation use the same `score_claim`: people at risk × urgency
 × inverse response window × a per-claim road-access factor. Explicitly named
@@ -108,7 +137,11 @@ stateDiagram-v2
   fallback --> mediator_decide
   finalize --> [*]
   [*] --> event_inject: replan(event_text)
-  event_inject --> refresh_affected_claims
+  event_inject --> diff_check: apply patch & diff
+  diff_check --> reject_noop: diff empty
+  diff_check --> derive_agents: diff non-empty
+  reject_noop --> [*]: is_valid=false, UI warning
+  derive_agents --> refresh_affected_claims
   refresh_affected_claims --> mediator_reallocate
   mediator_reallocate --> [*]
 ```
@@ -121,14 +154,15 @@ stateDiagram-v2
 | Shelter | Stranded residents, shelter capacity, evacuation and phased rescue | `shelter_capacity`, `zone_population` | `Claim`; peer `Estimate` |
 | Logistics | Supplies, vehicles, route access, transport feasibility | `road_status`, `vehicle_inventory`, `stock_levels` | `Claim`; peer `Estimate` |
 | Mediator | Challenge claims, request fallback/peer evidence, resolve conflict and allocate inventory | Deterministic scoring and inventory | `MediatorAction`, `Counter`, `Plan` |
-| Scenario | Validate event text, patch scenario facts, identify affected domains | LLM-validated `ScenarioPatch` | Updated `NegotiationState` |
+| Scenario | Validate event text, patch scenario facts, diff before/after, derive affected agents | LLM-validated `ScenarioPatch`, `ScenarioDiff` | Updated `NegotiationState` |
 
 ## Contracts and samples
 
 The Pydantic models in `lib/schemas.py` are the shared I/O contracts:
 `Zone`, `Scenario`, `Claim`, `Counter`, `Estimate`, `MediatorAction`, `Plan`,
-and `NegotiationState`. The Scenario agent additionally validates a
-`ScenarioPatch`. A compact sample matching those schemas follows.
+`ScenarioDiff`, and `NegotiationState`. The Scenario agent additionally
+validates a `ScenarioPatch` and computes a `ScenarioDiff` to detect no-ops
+and derive `affected_agents`. A compact sample matching those schemas follows.
 
 ```json
 {

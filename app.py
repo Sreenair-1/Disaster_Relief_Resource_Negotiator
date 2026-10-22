@@ -117,19 +117,19 @@ def main() -> None:
         cols[0].button(
             "Road blocked",
             on_click=set_event_text,
-            args=("Road access is blocked.",),
+            args=("Bridge to Zone A collapses, cutting all ground road access to Zone A.",),
         )
 
         cols[1].button(
             "New patients",
             on_click=set_event_text,
-            args=("A new group of critical patients has been reported.",),
+            args=("Eight new critical patients arrive in Zone B.",),
         )
 
         cols[0].button(
-            "Weather worsened",
+            "Water rising",
             on_click=set_event_text,
-            args=("Weather conditions have worsened.",),
+            args=("Water in Zone A rises sharply, doubling the number of stranded residents.",),
         )
 
         cols[1].button(
@@ -163,6 +163,11 @@ def main() -> None:
             st.error(result["error"])
         for warning in result.get("warnings", []):
             st.warning(f"Some relief data was unavailable: {warning}")
+        for ev in result.get("events", []):
+            if (ev.get("type") == "event_rejected"
+                    and isinstance(ev.get("payload"), dict)
+                    and ev["payload"].get("warning")):
+                st.warning(f"⚠️ Event had no effect: {ev['payload'].get('reason', 'no-op')}")
         if st.session_state.get("event_error"):
             st.error(st.session_state.pop("event_error"))
         events = st.session_state.get("trace_events", [])

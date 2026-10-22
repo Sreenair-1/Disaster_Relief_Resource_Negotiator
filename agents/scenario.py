@@ -5,19 +5,31 @@ from typing import Any
 
 from pydantic import BaseModel, Field
 
-from lib.schemas import NegotiationState, Scenario, Zone
+from lib.schemas import NegotiationState, Scenario, ScenarioDiff, Zone
 from lib.tracing import Tracer
 
 _PROMPT_PATH = Path(__file__).parent / "prompts" / "scenario.md"
 _SYSTEM_PROMPT: str | None = None
 
 PRESET_EVENTS: dict[str, str] = {
-    "bridge_collapse": "Bridge to Zone A collapses, blocking all ground road access.",
-    "hospital_capacity": "Regional Hospital reaches full capacity; ICU beds exhausted.",
-    "water_rising_fast": "Water in Zone A rising faster than forecasted; flooding spreading.",
-    "new_casualties": "Flash surge in Zone B: 15 additional critical casualties reported.",
-    "resource_loss": "Warehouse flood damages supply depot: 1 boat lost and fuel contaminated.",
-    "road_blocked": "Primary access road blocked by landslide.",
+    "bridge_collapse": (
+        "Bridge to Zone A collapses, cutting all ground road access to Zone A."
+    ),
+    "hospital_capacity": (
+        "Regional Hospital reaches full capacity; ICU beds exhausted."
+    ),
+    "water_rising_fast": (
+        "Water in Zone A rises sharply, doubling the number of stranded residents."
+    ),
+    "new_casualties": (
+        "Eight new critical patients arrive in Zone B."
+    ),
+    "resource_loss": (
+        "Warehouse flood damages supply depot: 1 boat lost and fuel contaminated."
+    ),
+    "road_blocked": (
+        "Landslide blocks the primary access road to Zone B, cutting road access to Zone B."
+    ),
 }
 
 
@@ -144,6 +156,72 @@ def _apply_patch(scenario: Scenario, patch: ScenarioPatch) -> Scenario:
     return new_scenario
 
 
+def _diff_scenarios(before: Scenario, after: Scenario) -> ScenarioDiff:
+    """Compute a field-level diff between two scenario snapshots."""
+    changes: dict[str, dict[str, Any]] = {}
+
+    # Compare zone-level fields
+    before_zones = {z.name: z for z in before.zones}
+    after_zones = {z.name: z for z in after.zones}
+    for name in sorted(set(before_zones) | set(after_zones)):
+        bz = before_zones.get(name)
+        az = after_zones.get(name)
+        if bz is None or az is None:
+            changes[f"zone_{name}"] = {"before": bz and bz.model_dump(), "after": az and az.model_dump()}
+            continue
+        for field in ("road_access", "critical_patients", "stranded", "population"):
+            old, new = getattr(bz, field), getattr(az, field)
+            if old != new:
+                key = f"{field}:{name}"
+                changes[key] = {"before": old, "after": new}
+
+    # Compare roads
+    if before.roads != after.roads:
+        changes["roads"] = {"before": dict(before.roads), "after": dict(after.roads)}
+
+    # Compare resources
+    if before.resources != after.resources:
+        changes["resources"] = {"before": dict(before.resources), "after": dict(after.resources)}
+
+    # Compare hospitals
+    if before.hospitals != after.hospitals:
+        changes["hospitals"] = {"before": list(before.hospitals), "after": list(after.hospitals)}
+
+    return ScenarioDiff(changed_fields=changes)
+
+
+def _derive_affected_agents(diff: ScenarioDiff) -> list[str]:
+    """Derive affected agents from the fields that actually changed in the diff."""
+    agents: set[str] = set()
+    for key in diff.changed_fields:
+        lower = key.lower()
+        # road / route changes → logistics + any zone-referencing agent
+        if "road" in lower or "route" in lower:
+            agents.update(["logistics", "medical", "shelter"])
+        # casualties / hospital → medical
+        if "critical_patients" in lower or "hospital" in lower or "casualt" in lower:
+            agents.add("medical")
+        # stranded / shelter → shelter
+        if "stranded" in lower or "shelter" in lower:
+            agents.add("shelter")
+        # resource changes affect all agents
+        if "resource" in lower:
+            agents.update(["logistics", "medical", "shelter"])
+    return sorted(agents)
+
+
+def _patch_is_empty(patch: ScenarioPatch) -> bool:
+    """Check if every mutation field of the patch is empty."""
+    return (
+        not patch.road_access
+        and not patch.roads
+        and not patch.zone_casualties
+        and not patch.zone_stranded
+        and not patch.resource_loss
+        and not patch.hospital_capacity
+    )
+
+
 def _build_user_message(state: NegotiationState, text: str) -> str:
     """Compose user prompt for LLM evaluation of incoming scenario event."""
     zones_summary = [
@@ -160,7 +238,35 @@ def _build_user_message(state: NegotiationState, text: str) -> str:
         f"Incoming event text: \"{text}\"\n\n"
         "Evaluate this event against the disaster context. If it is nonsense, humor, or unrelated, "
         "set is_valid=false. Otherwise, set is_valid=true and populate affected_agents and scenario mutations. "
+        "You MUST output concrete numeric deltas for every physical change. "
+        "If the event names no specific zone, apply it to every zone it plausibly affects. "
+        "Never return empty maps for a physical event. "
         "Return valid JSON matching ScenarioPatch."
+    )
+
+
+def _build_retry_message(state: NegotiationState, text: str) -> str:
+    """Build a retry user message that insists on concrete changes."""
+    zones_summary = [
+        f"Zone '{z.name}': population={z.population}, stranded={z.stranded}, "
+        f"critical_patients={z.critical_patients}, road_access={z.road_access}"
+        for z in state.scenario.zones
+    ]
+    return (
+        f"Your previous response had is_valid=true but EMPTY mutation fields. "
+        f"That is WRONG. The event MUST change the scenario.\n\n"
+        f"Disaster type: {state.scenario.disaster_type}\n"
+        f"Resources: {state.scenario.resources}\n"
+        f"Road conditions: {state.scenario.roads}\n"
+        f"Hospitals: {state.scenario.hospitals}\n"
+        f"Zones: {zones_summary}\n"
+        f"Event: \"{text}\"\n\n"
+        "This is a PHYSICAL event. You MUST specify CONCRETE numeric values. "
+        "For road events, set road_access and roads for affected zones. "
+        "For casualty events, set zone_casualties. "
+        "For water/stranding events, set zone_stranded. "
+        "If the event names no zone, apply to ALL zones. "
+        "Return valid JSON matching ScenarioPatch with non-empty mutation fields."
     )
 
 
@@ -183,7 +289,12 @@ def inject_event(
     """
     cleaned = text.strip()
     if not cleaned:
-        tracer.log("scenario", "mediator", "event_rejected", {"text": text, "reason": "Empty event description."})
+        tracer.log(
+            "scenario",
+            "mediator",
+            "event_rejected",
+            {"text": text, "is_valid": False, "reason": "empty or whitespace event", "warning": False},
+        )
         return state.model_copy(deep=True, update={"affected_agents": []})
 
     tracer.log("scenario", "llm", "event_eval_request", {"text": cleaned})
@@ -198,12 +309,52 @@ def inject_event(
             "scenario",
             "mediator",
             "event_rejected",
-            {"text": cleaned, "reason": patch.summary},
+            {
+                "text": cleaned,
+                "is_valid": False,
+                "reason": patch.summary or "rejected by scenario agent as invalid",
+                "warning": False,
+            },
         )
         return state.model_copy(deep=True, update={"affected_agents": []})
 
-    # Apply patch to a deep COPY of the scenario
+    # Apply proposed patch to a copy and compute the actual changed-field diff
     new_scenario = _apply_patch(state.scenario, patch)
+    diff = _diff_scenarios(state.scenario, new_scenario)
+
+    # If nothing changed, retry the event generation exactly once
+    if diff.is_empty or _patch_is_empty(patch):
+        retry_msg = _build_retry_message(state, cleaned)
+        try:
+            patch = llm.complete_json(system_msg, retry_msg, ScenarioPatch)
+        except Exception:
+            patch = ScenarioPatch(
+                is_valid=False,
+                summary="event had no effect on the scenario",
+                affected_agents=[],
+            )
+
+        if patch.is_valid:
+            new_scenario = _apply_patch(state.scenario, patch)
+            diff = _diff_scenarios(state.scenario, new_scenario)
+
+        # If the second attempt still produces no actual change, reject
+        if not patch.is_valid or diff.is_empty or _patch_is_empty(patch):
+            tracer.log(
+                "scenario",
+                "mediator",
+                "event_rejected",
+                {
+                    "text": cleaned,
+                    "is_valid": False,
+                    "reason": "event had no effect on the scenario",
+                    "warning": True,
+                },
+            )
+            return state.model_copy(deep=True, update={"affected_agents": []})
+
+    # Derive affected_agents from actual field changes, not just LLM guess
+    derived_agents = _derive_affected_agents(diff)
 
     # Set affected agents and append event to state
     new_state = state.model_copy(
@@ -211,18 +362,19 @@ def inject_event(
         update={
             "scenario": new_scenario,
             "events": [*state.events, cleaned],
-            "affected_agents": patch.affected_agents,
+            "affected_agents": derived_agents,
         },
     )
 
     tracer.log(
         "scenario",
         "mediator",
-        "event",
+        "event_applied",
         {
             "text": cleaned,
             "patch": patch.model_dump(),
-            "affected_agents": patch.affected_agents,
+            "diff": diff.model_dump(),
+            "affected_agents": derived_agents,
         },
     )
     return new_state

@@ -61,6 +61,19 @@ class Plan(BaseModel):
     disputes_log: list[str] = Field(default_factory=list)
 
 
+class ScenarioDiff(BaseModel):
+    """Before/after diff of scenario fields changed by an event patch."""
+
+    changed_fields: dict[str, dict[str, Any]] = Field(
+        default_factory=dict,
+        description="field_name -> {'before': ..., 'after': ...} for each changed field.",
+    )
+
+    @property
+    def is_empty(self) -> bool:
+        return len(self.changed_fields) == 0
+
+
 class NegotiationState(BaseModel):
     scenario: Scenario
     round: int = 0
