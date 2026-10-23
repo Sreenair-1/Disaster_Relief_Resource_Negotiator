@@ -79,6 +79,10 @@ def test_wayanad_scenario_metrics():
     assert "Meppadi Valley" in zone_names
     assert "Sulthan Bathery Lowland" in zone_names
     assert sc.resources["trucks"] >= 10
+    assert sc.operations.boat_capacity_persons == 10
+    assert sc.operations.trip_hours_by_zone["Mananthavady Riverine"] == 3
+    assert sc.operations.truck_capacity_persons == 20
+    assert sc.operations.hospitals[0].icu_beds_free is None
 
 
 # ── Tool-Failure Path Tests for MedicalAgent ─────────────────────────

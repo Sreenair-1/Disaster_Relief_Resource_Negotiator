@@ -8,7 +8,7 @@ from lib.scoring import over_subscribed, score_claim
 from agents.medical import make_claim as medical_claim
 from agents.scenario import inject_event
 from agents.shelter import make_claim as shelter_claim
-from lib.feasibility import demand_totals, validate_claim_demand
+from lib.feasibility import demand_totals, validate_claim_demand, validate_claim_facts
 from lib.schemas import Counter, ClaimRevision, MediatorAction, NegotiationState
 
 CLAIMERS = {"medical": medical_claim, "shelter": shelter_claim, "logistics": logistics_claim}
@@ -43,6 +43,13 @@ def replan(state: NegotiationState, event_text: str, llm: Any, tracer: Any) -> N
         make_claim = CLAIMERS.get(agent)
         if make_claim:
             claim = make_claim(updated, llm, tracer)
+            original_claim = claim
+            claim, corrections = validate_claim_facts(claim, updated.scenario)
+            if corrections:
+                tracer.log(agent, "mediator", "claim_corrected", {
+                    "corrections": corrections,
+                    "before": original_claim.model_dump(), "after": claim.model_dump(),
+                })
             checked = validate_claim_demand(claim, updated.scenario)
             existing[agent] = checked.claim
             if checked.requested_people != checked.eligible_people:
@@ -55,7 +62,7 @@ def replan(state: NegotiationState, event_text: str, llm: Any, tracer: Any) -> N
     # After an event changes an oversubscribed negotiation, ask one affected
     # claimant to respond to the new conditions before reallocating.
     deficits = over_subscribed(updated.claims, updated.scenario)
-    if deficits and updated.round < 3:
+    if deficits and updated.round < 6:
         missing, uncertain = [], []
         target = _counter_target(updated, deficits, missing, uncertain)
         question = _counter_question(target, MediatorAction.challenge_agent, deficits)
@@ -65,6 +72,13 @@ def replan(state: NegotiationState, event_text: str, llm: Any, tracer: Any) -> N
         updated.counters.append(counter)
         previous = existing.get(target)
         revised = CLAIMERS[target](updated, llm, tracer, counter)
+        original_revision = revised
+        revised, corrections = validate_claim_facts(revised, updated.scenario)
+        if corrections:
+            tracer.log(target, "mediator", "claim_corrected", {
+                "corrections": corrections,
+                "before": original_revision.model_dump(), "after": revised.model_dump(),
+            })
         checked = validate_claim_demand(revised, updated.scenario)
         existing[target] = checked.claim
         updated.claims = list(existing.values())

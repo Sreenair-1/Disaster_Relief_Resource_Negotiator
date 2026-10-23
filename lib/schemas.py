@@ -28,6 +28,8 @@ class Operations(BaseModel):
     boat_capacity_persons: int | None = Field(default=None, gt=0)
     trip_hours_by_zone: dict[str, float] = Field(default_factory=dict)
     ambulance_capacity: int | None = Field(default=None, ge=0)
+    ambulance_availability: int | None = Field(default=None, ge=0)
+    truck_capacity_persons: int | None = Field(default=None, gt=0)
     hospitals: list[Hospital] = Field(default_factory=list)
 
     @model_validator(mode="after")
@@ -86,6 +88,7 @@ class Claim(BaseModel):
     fallback_option: str
     uncertainty: float | None = Field(default=None, ge=0, le=1)
     unverified_support: bool = False
+    contradicts_data: bool = False
 
 
 class Counter(BaseModel):

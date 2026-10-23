@@ -97,6 +97,9 @@ from `Scenario.operations.hospitals`; unknown fields stay `null`. Transport
 options mark ground access infeasible below the configured `0.5` demo threshold
 or when the named road is blocked or landslide-damaged. `verified` is true only
 when every returned capacity and route field relied on by planning is known.
+Wayanad's operations values are demonstration assumptions, not verified local
+fleet or route measurements. The cited IFRC early-action guidance supports
+prioritizing early evacuation and at-risk people but supplies no capacities.
 
 ## Orchestration and replanning
 
@@ -104,8 +107,7 @@ when every returned capacity and route field relied on by planning is known.
 Medical, Shelter, and Logistics, asks Mediator for the next
 `MediatorAction`, and routes `challenge_agent` to a revision or
 `request_fallback` / `ask_peer_estimate` to an estimate. The graph finalizes
-when Mediator selects `finalize` or `accept_revision`, or when the three-round
-cap is reached.
+when Mediator selects `finalize` or the six-round safety cap is reached.
 
 **Estimate feedback loop.** Estimates returned by agents during
 `request_fallback` / `ask_peer_estimate` are stored in
@@ -121,7 +123,7 @@ estimate informs the next decision or challenge rather than ending at the trace.
    claimants respond, or when total requests fit inventory.
 2. Use `request_fallback` / `ask_peer_estimate` only for uncertain claims or
    failed tools.
-3. The three-round cap is a safety net. At the cap, finalize with
+3. The six-round cap is a safety net. At the cap, finalize with
    `status="constrained"` and explicit `unresolved_shortfalls` (resource, unmet
    amount, claimants), rather than implying unresolved demand was settled.
 

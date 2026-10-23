@@ -11,6 +11,8 @@
     "boat_capacity_persons": 50,
     "trip_hours_by_zone": {"Zone A": 2.0, "Zone B": 2.0},
     "ambulance_capacity": 2,
-    "hospitals": [{"name": "Regional Hospital"}]
+    "ambulance_availability": null,
+    "truck_capacity_persons": null,
+    "hospitals": [{"name": "Regional Hospital", "icu_beds_free": null, "accepts_transfers": null, "travel_hours": null}]
   }
 }

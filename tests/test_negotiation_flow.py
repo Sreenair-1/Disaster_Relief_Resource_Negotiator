@@ -175,7 +175,7 @@ def test_round_cap_forces_finalize():
     """At round 3, decide_next forces finalize without calling the LLM."""
     tracer = MemoryTracer()
     state = _oversubscribed_state()
-    state.round = 3
+    state.round = 6
 
     # No LLM responses needed — the round cap should force finalize
     llm = StubLLM([])

@@ -70,7 +70,7 @@ def _unresolved_conflict_agents(state, deficits, revised, defended):
 
 
 def decide_next(state: NegotiationState, llm, tracer: Tracer) -> MediatorAction:
-    """Choose a negotiation action from current evidence; finalize by round 3."""
+    """Choose an action from evidence; finalize at the configured six-round cap."""
     deficits = over_subscribed(state.claims, state.scenario)
     scores = {
         claim.agent: round(score_claim(claim, state.scenario), 3)
@@ -94,7 +94,7 @@ def decide_next(state: NegotiationState, llm, tracer: Tracer) -> MediatorAction:
 
     context = {
         "round": state.round,
-        "round_cap": 3,
+        "round_cap": 6,
         "claims": [claim.model_dump() for claim in state.claims],
         "scores": scores,
         "over_subscription": deficits,
@@ -108,7 +108,7 @@ def decide_next(state: NegotiationState, llm, tracer: Tracer) -> MediatorAction:
         "agents_not_yet_responded": unresolved_agents,
     }
 
-    if state.round >= 3:
+    if state.round >= 6:
         decision = _Decision(action=MediatorAction.finalize, reasoning="Round cap reached.")
     else:
         decision = llm.complete_json(
@@ -122,7 +122,7 @@ def decide_next(state: NegotiationState, llm, tracer: Tracer) -> MediatorAction:
 
     # Every oversubscribed claimant must revise or defend with evidence before
     # an early final decision can be accepted.
-    forced_conflict_challenge = bool(deficits and unresolved_agents and state.round < 3)
+    forced_conflict_challenge = bool(deficits and unresolved_agents and state.round < 6)
     if forced_conflict_challenge:
         target = unresolved_agents[0]
         decision = _Decision(
@@ -457,7 +457,7 @@ def finalize(state: NegotiationState, llm, tracer: Tracer) -> Plan:
         justifications[claim.agent] = f"{valid_note} {detail}".strip()
 
     deficits = over_subscribed(state.claims, state.scenario)
-    unresolved = _unresolved_shortfalls(state, allocation) if state.round >= 3 else []
+    unresolved = _unresolved_shortfalls(state, allocation) if state.round >= 6 else []
     unresolved_agents = _unresolved_conflict_agents(
         state,
         deficits,
@@ -466,7 +466,7 @@ def finalize(state: NegotiationState, llm, tracer: Tracer) -> Plan:
     )
     status = "constrained" if deficits or unresolved else "resolved"
     if deficits:
-        if state.round >= 3:
+        if state.round >= 6:
             conflicts = [
                 f"Round cap reached with {item.unmet_amount} {item.resource} unmet; "
                 f"unresolved claimants: {', '.join(item.agents)}."

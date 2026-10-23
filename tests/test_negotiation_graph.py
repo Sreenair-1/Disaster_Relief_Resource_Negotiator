@@ -58,3 +58,30 @@ def test_claim_demand_partition_and_clamp_are_traced(monkeypatch, tracer):
 
     assert any(event["type"] == "demand_partition" for event in tracer.events)
     assert any(event["type"] == "claim_demand_clamped" for event in tracer.events)
+
+
+def test_claim_fact_correction_is_traced(monkeypatch, tracer):
+    import graph.negotiation as graph
+
+    def false_capacity(agent):
+        return lambda *args, **kwargs: Claim(
+            agent=agent, resources={}, people_affected=1, urgency=5,
+            time_window_hrs=2, justification="About 1,300 persons per boat in Zone A.",
+            fallback_option="phase",
+        )
+
+    monkeypatch.setattr(graph, "CLAIMERS", {
+        name: false_capacity(name) for name in ("medical", "shelter", "logistics")
+    })
+    monkeypatch.setattr(graph, "decide_next", lambda *args: MediatorAction.finalize)
+    monkeypatch.setattr(graph, "mediator_finalize", lambda state, llm, tracer: Plan())
+    scenario = Scenario.model_validate({
+        "disaster_type": "flood", "zones": [{"name": "Zone A", "population": 10}],
+        "operations": {"boat_capacity_persons": 50},
+    })
+    state = graph.run_negotiation(scenario, StubLLM(), tracer)
+    assert all(claim.contradicts_data for claim in state.claims)
+    corrected = [event for event in tracer.events if event["type"] == "claim_corrected"]
+    assert len(corrected) == 3
+    assert "1,300 persons per boat" in corrected[0]["payload"]["before"]["justification"]
+    assert "50 persons per boat" in corrected[0]["payload"]["after"]["justification"]

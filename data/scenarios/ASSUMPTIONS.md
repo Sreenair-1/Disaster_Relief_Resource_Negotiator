@@ -59,3 +59,11 @@ To ensure genuine multi-agent negotiation dynamics and resource conflict:
 - **Boats Quota**: Total available rescue boats (10–12 units) fall significantly below the aggregate demand if Medical (critical patient medevac), Shelter (mass civilian rescue), and Logistics (waterborne supply delivery) each claim their ideal capacity simultaneously.
 - **Trucks Quota**: Total logistics trucks (8–14 units) are constrained, compelling the Logistics Agent to prioritize between clear-road food/water transit hubs and secondary staging corridors.
 - **Mediator Objective**: Forces agents to negotiate concessions, utilize phased waves, propose alternate fallback routes, and leverage peer estimates.
+
+## 5. Unverified Wayanad operations inputs
+
+The scenario's operations values are demo assumptions, not verified district
+fleet or route records. IFRC early-action materials support evacuation planning
+and prioritizing vulnerable people, but do not specify vehicle capacity or
+local journey times. See the source and per-value rationale in
+`../../docs/ASSUMPTIONS.md`.

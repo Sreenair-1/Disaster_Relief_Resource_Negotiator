@@ -45,7 +45,7 @@ Inject an event after a successful first run to see the before/after allocation
 comparison and the reasons for updated awards.
 
 When requests exceed stock, the Mediator records each claimant's response to a
-counter before early finalization. If the three-round safety cap is reached,
+counter before early finalization. If the six-round safety cap is reached,
 the plan is marked `constrained` and reports unresolved resource shortfalls.
 Allocation ranks severity-weighted, time-sensitive claims, respects known
 feasibility caps, and splits stock proportionally only within tied priority
@@ -54,6 +54,9 @@ Medical support is marked unverified when ICU or receiving-facility data is
 unknown; infeasible road or unavailable-boat fallback options are rejected.
 Capacity tools report only scenario-provided values; unknown capacity remains
 null and route verification requires the planning inputs to be known.
+The Wayanad operations block is explicitly a demo assumption ledger, not local
+fleet data; IFRC early-action guidance informs urgency but provides no vehicle
+capacities or zone travel times.
 The final plan includes a feasibility report, and its explanations are checked
 against the numeric scores, ranks, requests, and awards before display.
 Preset events apply concrete scenario diffs, including hospital ICU and

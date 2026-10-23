@@ -40,3 +40,33 @@ verified operational data and must not be presented as field measurements.
   are sourced from the scenario.
 - Hospital and transport tools never fill unknown fields with assumed numeric
   values. `verified` is false when any field needed by a plan is unknown.
+
+## Follow-up commit 2: Wayanad and seed operations
+
+Public [IFRC Early Warning, Early Action guidance](https://www.ifrc.org/early-warning-early-action)
+and the [IFRC Bangladesh Flood Early Action Protocol](https://go.ifrc.org/emergencies/7605/details)
+support early evacuation, including assistance for people at risk; neither prescribes
+the capacities or travel times below. These operational values are therefore
+explicitly assumed for a software demo, not verified local data:
+
+- Wayanad uses 10 persons per boat; its assumed round trips are 2 hours for
+  Meppadi Valley, 4 for Vythiri High Range, 3 for Mananthavady Riverine, and 2
+  for Sulthan Bathery Lowland. These distinguish steep/landslide routes from
+  the lowerland demo routes; validate locally before operational use.
+- Wayanad truck capacity is 20 person-equivalents per trip, a placeholder for
+  testing the zone assignment path, not a vehicle specification.
+- Wayanad ambulance availability and capacity are `null` because the scenario
+  provides no count or passenger capacity. Both hospital ICU beds, transfer
+  acceptance, and travel times are `null` because no facility records were
+  supplied.
+- The seed retains its existing 50 persons per boat and 2-hour round trips per
+  zone as demonstration assumptions. Seed truck capacity and ambulance
+  availability are unknown (`null`); the legacy ambulance count field is not
+  treated as verified availability.
+- Existing Wayanad inventory values (10 boats and 14 trucks) and demographic
+  counts remain scenario inputs, not independently verified response data.
+- Claims that state a known boat capacity or round-trip time inconsistent with
+  `operations` are corrected to the scenario value and traced; no new factual
+  capacity is inferred from claim prose.
+- The six-round negotiation cap is a workflow safety setting, not an empirically
+  derived response limit.

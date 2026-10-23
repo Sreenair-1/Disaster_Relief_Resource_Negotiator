@@ -9,7 +9,7 @@ from agents.logistics import estimate as logistics_estimate, make_claim as logis
 from agents.medical import estimate as medical_estimate, make_claim as medical_claim
 from agents.mediator import decide_next, finalize as mediator_finalize
 from agents.shelter import estimate as shelter_estimate, make_claim as shelter_claim
-from lib.feasibility import demand_totals, validate_claim_demand
+from lib.feasibility import demand_totals, validate_claim_demand, validate_claim_facts
 from lib.schemas import ClaimRevision, Counter, MediatorAction, NegotiationState
 
 CLAIMERS = {"medical": medical_claim, "shelter": shelter_claim, "logistics": logistics_claim}
@@ -35,6 +35,13 @@ def _collect_claims(ctx: _GraphState) -> _GraphState:
     ctx["tracer"].log("feasibility", "mediator", "demand_partition", totals)
     for agent, make_claim in CLAIMERS.items():
         claim = make_claim(state, ctx["llm"], ctx["tracer"])
+        original_claim = claim
+        claim, corrections = validate_claim_facts(claim, state.scenario)
+        if corrections:
+            ctx["tracer"].log(agent, "mediator", "claim_corrected", {
+                "corrections": corrections,
+                "before": original_claim.model_dump(), "after": claim.model_dump(),
+            })
         checked = validate_claim_demand(claim, state.scenario)
         state.claims.append(checked.claim)
         if checked.requested_people != checked.eligible_people:
@@ -86,6 +93,13 @@ def _challenge(ctx: _GraphState) -> _GraphState:
         index = next((i for i, claim in enumerate(state.claims) if claim.agent == agent), None)
         old_claim = state.claims[index] if index is not None else None
         revision = CLAIMERS[agent](state, ctx["llm"], ctx["tracer"], _counter_for(state, agent))
+        original_revision = revision
+        revision, corrections = validate_claim_facts(revision, state.scenario)
+        if corrections:
+            ctx["tracer"].log(agent, "mediator", "claim_corrected", {
+                "corrections": corrections,
+                "before": original_revision.model_dump(), "after": revision.model_dump(),
+            })
         checked = validate_claim_demand(revision, state.scenario)
         revision = checked.claim
         if checked.requested_people != checked.eligible_people:
@@ -144,7 +158,7 @@ def _finish(ctx: _GraphState) -> _GraphState:
 
 
 def _route(ctx: _GraphState) -> str:
-    if ctx["state"].round >= 3 or ctx["action"] == MediatorAction.finalize:
+    if ctx["state"].round >= 6 or ctx["action"] == MediatorAction.finalize:
         return "finalize"
     if ctx["action"] == MediatorAction.challenge_agent:
         return "challenge"

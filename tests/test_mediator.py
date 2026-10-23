@@ -53,11 +53,11 @@ def test_decision_varies_with_state_and_emits_counter(sample_scenario):
     assert [event["type"] for event in tracer.events].count("decision") == 2
 
 
-def test_round_three_forces_finalize_without_llm(sample_scenario):
+def test_round_six_forces_finalize_without_llm(sample_scenario):
     tracer = MemoryTracer()
-    state = _state(sample_scenario, round=3)
+    state = _state(sample_scenario, round=6)
     assert decide_next(state, StubLLM(), tracer) == MediatorAction.finalize
-    assert tracer.events[-1]["payload"]["round"] == 3
+    assert tracer.events[-1]["payload"]["round"] == 6
 
 
 def test_peer_estimate_decision_emits_targeted_counter(sample_scenario):

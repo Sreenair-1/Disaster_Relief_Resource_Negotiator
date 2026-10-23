@@ -38,6 +38,22 @@
     "Wayanad District Hospital Mananthavady",
     "Sulthan Bathery Taluk Headquarters Hospital"
   ],
+  "operations": {
+    "boat_capacity_persons": 10,
+    "trip_hours_by_zone": {
+      "Meppadi Valley": 2.0,
+      "Vythiri High Range": 4.0,
+      "Mananthavady Riverine": 3.0,
+      "Sulthan Bathery Lowland": 2.0
+    },
+    "truck_capacity_persons": 20,
+    "ambulance_capacity": null,
+    "ambulance_availability": null,
+    "hospitals": [
+      {"name": "Wayanad District Hospital Mananthavady", "icu_beds_free": null, "accepts_transfers": null, "travel_hours": null},
+      {"name": "Sulthan Bathery Taluk Headquarters Hospital", "icu_beds_free": null, "accepts_transfers": null, "travel_hours": null}
+    ]
+  },
   "roads": {
     "Meppadi Valley": "blocked",
     "Vythiri High Range": "landslide",

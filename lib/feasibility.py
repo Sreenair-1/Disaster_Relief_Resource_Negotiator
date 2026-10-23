@@ -2,6 +2,7 @@
 
 from dataclasses import dataclass
 from math import ceil, floor
+import re
 
 from lib.schemas import Claim, Operations, Scenario, Zone
 
@@ -22,6 +23,45 @@ class ClaimDemandCheck:
     requested_people: int
     eligible_people: int
     overlaps: tuple[str, ...] = ()
+
+
+def validate_claim_facts(claim: Claim, scenario: Scenario) -> tuple[Claim, list[str]]:
+    """Correct explicit capacity facts that disagree with known scenario data."""
+    text = claim.justification
+    corrections: list[str] = []
+    capacity = scenario.operations.boat_capacity_persons
+    if capacity is not None:
+        patterns = (
+            re.compile(r"(?P<full>(?:about\s+|~\s*)?\d[\d,]*\s*(?:people|persons)\s+per\s+boat)", re.I),
+            re.compile(r"(?P<full>boats?\s+(?:can\s+)?carry\s+\d[\d,]*\s*(?:people|persons)?)", re.I),
+            re.compile(r"(?P<full>capacity\s+of\s+(?:each\s+)?boat\s*(?:is|=)\s*\d[\d,]*)", re.I),
+        )
+        for pattern in patterns:
+            match = pattern.search(text)
+            if match:
+                old = re.search(r"\d[\d,]*", match.group("full")).group().replace(",", "")
+                if int(old) != capacity:
+                    text = text[:match.start()] + f"{capacity} persons per boat" + text[match.end():]
+                    corrections.append(f"boat capacity corrected from {old} to {capacity} persons")
+                    break
+
+    zone_names = [z.name for z in scenario.zones if z.name.casefold() in text.casefold()]
+    roundtrips = {scenario.operations.trip_hours_by_zone[name] for name in zone_names
+                  if name in scenario.operations.trip_hours_by_zone}
+    if not roundtrips and len(set(scenario.operations.trip_hours_by_zone.values())) == 1:
+        roundtrips = set(scenario.operations.trip_hours_by_zone.values())
+    if len(roundtrips) == 1:
+        expected = next(iter(roundtrips))
+        pattern = re.compile(r"(?P<full>\d+(?:\.\d+)?\s*[- ]?hours?\s+(?:round[- ]?trip|round trip time))", re.I)
+        match = pattern.search(text)
+        if match:
+            old = float(re.search(r"\d+(?:\.\d+)?", match.group()).group())
+            if old != expected:
+                text = text[:match.start()] + f"{expected:g}-hour round trip" + text[match.end():]
+                corrections.append(f"round-trip time corrected from {old:g} to {expected:g} hours")
+
+    updates = {"justification": text, "contradicts_data": bool(corrections)} if corrections else {}
+    return (claim.model_copy(update=updates) if updates else claim), corrections
 
 
 def demand_by_zone(zone: Zone) -> ZoneDemand:

@@ -5,6 +5,7 @@ from lib.feasibility import (
     route_feasible,
     unit_cap,
     validate_claim_demand,
+    validate_claim_facts,
 )
 from lib.schemas import Claim, Operations, Scenario, Zone
 
@@ -57,3 +58,15 @@ def test_boat_need_and_unit_cap_use_round_trip_capacity():
 
 def test_zero_road_access_rejects_ground_fallback():
     assert route_feasible(Zone(name="A", population=1, road_access=0), "ambulance") is False
+
+
+def test_claim_capacity_fact_is_corrected_to_scenario_value(sample_scenario):
+    claim = Claim(agent="shelter", resources={"boats": 4}, people_affected=300,
+                  urgency=8, time_window_hrs=4,
+                  justification="A boat carries about 1,300 persons per boat in Zone A.",
+                  fallback_option="wait")
+    corrected, notes = validate_claim_facts(claim, sample_scenario)
+    assert corrected.contradicts_data is True
+    assert "50 persons per boat" in corrected.justification
+    assert "1,300 persons per boat" not in corrected.justification
+    assert notes == ["boat capacity corrected from 1300 to 50 persons"]
