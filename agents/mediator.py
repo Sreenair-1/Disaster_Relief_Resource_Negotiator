@@ -8,7 +8,8 @@ from pydantic import BaseModel, Field
 
 from lib.schemas import Counter, MediatorAction, NegotiationState, Plan, UnresolvedShortfall
 from lib.feasibility import (demand_by_zone, ground_route_feasible, unit_cap,
-                             boats_needed)
+                             boats_needed, canonical_resource, supply_need,
+                             delivery_capacity, days_of_cover)
 from lib.feasibility import demand_totals
 from lib.scoring import over_subscribed, score_claim
 from lib.tracing import Tracer
@@ -287,8 +288,34 @@ def _zone_unit_caps(claim, resource, scenario):
     caps = {}
     for zone in scenario.zones:
         people = _zone_people(claim.agent, zone, scenario)
-        if people <= 0:
+        supply_vehicle_claim = (
+            claim.agent == "logistics" and resource in {"boats", "trucks"}
+            and scenario.operations.supply_horizon_days is not None
+            and any(canonical_resource(name) in {"food_packs", "water_liters"}
+                    and amount > 0 for name, amount in claim.resources.items())
+        )
+        if people <= 0 and not supply_vehicle_claim:
             continue
+        if (claim.agent == "logistics" and resource in {"boats", "trucks"}
+                and scenario.operations.supply_horizon_days is not None):
+            vehicle = "boats" if resource == "boats" else "trucks"
+            payload_configured = any((scenario.operations.boat_payload_packs,
+                                      scenario.operations.boat_payload_liters)) if vehicle == "boats" else any((scenario.operations.truck_payload_packs,
+                                                                                                             scenario.operations.truck_payload_liters))
+            if payload_configured:
+                required_units = 0
+                for supply in ("food_packs", "water_liters"):
+                    requested = sum(amount for name, amount in claim.resources.items()
+                                    if canonical_resource(name) == supply)
+                    need = int(supply_need(zone, scenario.operations).get(supply) or 0)
+                    one_vehicle = delivery_capacity(scenario, zone, claim.time_window_hrs,
+                                                    {vehicle: 1})[supply]
+                    if requested > 0 and one_vehicle > 0:
+                        required_units = max(required_units,
+                                             ceil(min(need, requested) / one_vehicle))
+                if required_units:
+                    caps[zone.name] = required_units
+                continue
         if resource == "boats":
             need = boats_needed(zone, people, claim.time_window_hrs, scenario.operations)
             if need is not None:
@@ -299,6 +326,9 @@ def _zone_unit_caps(claim, resource, scenario):
                 caps[zone.name] = ceil(people / capacity)
         elif resource == "shelter_beds":
             caps[zone.name] = people
+        elif resource in {"food_packs", "water_liters"}:
+            need = supply_need(zone, scenario.operations).get(resource)
+            caps[zone.name] = int(need or 0)
         else:
             caps[zone.name] = max(1, people)
     return caps
@@ -340,10 +370,46 @@ def _allocation_by_zone(claims, scenario, scores):
     by_zone = {zone.name: {} for zone in scenario.zones}
     by_agent_zone = {claim.agent: {zone.name: {} for zone in scenario.zones} for claim in claims}
     totals = {claim.agent: {} for claim in claims}
-    remaining_stock = dict(scenario.resources)
-    all_resources = sorted({r for claim in claims for r in claim.resources
-                            if r in scenario.resources})
+    remaining_stock = {canonical_resource(r): amount for r, amount in scenario.resources.items()}
+    all_resources = {canonical_resource(r) for claim in claims for r in claim.resources
+                     if canonical_resource(r) in remaining_stock}
+    all_resources = sorted(all_resources, key=lambda r: (r in {"food_packs", "water_liters"},
+                                                          0 if r in {"boats", "trucks"} else 1, r))
+    undeliverable = {}
     for resource in all_resources:
+        if resource in {"food_packs", "water_liters"}:
+            # Supplies are delivered only after every claimant's vehicles have
+            # been assigned. Each boat is treated as supply-only for this window.
+            logistics = next((c for c in claims if c.agent == "logistics"), None)
+            if logistics is None:
+                continue
+            requested = min(sum(amount for name, amount in logistics.resources.items()
+                                if canonical_resource(name) == resource),
+                            unit_cap(logistics, scenario, resource))
+            zones = []
+            for zone in scenario.zones:
+                need = int(supply_need(zone, scenario.operations).get(resource) or 0)
+                vehicles = by_agent_zone.get("logistics", {}).get(zone.name, {})
+                cap = int(delivery_capacity(scenario, zone, logistics.time_window_hrs, vehicles)[resource])
+                zones.append((zone, need, cap))
+            # Cut-off zones first, then the largest uncovered requirements.
+            zones.sort(key=lambda item: (item[0].road_access >= 0.5, -item[1], item[0].name))
+            stock_budget = min(remaining_stock.get(resource, 0), requested)
+            for zone, need, cap in zones:
+                amount = min(stock_budget, need, cap)
+                if amount:
+                    by_zone[zone.name][resource] = by_zone[zone.name].get(resource, 0) + amount
+                    by_agent_zone[logistics.agent][zone.name][resource] = amount
+                    totals[logistics.agent][resource] = totals[logistics.agent].get(resource, 0) + amount
+                    stock_budget -= amount
+            remaining_stock[resource] -= totals[logistics.agent].get(resource, 0)
+            total_delivery = sum(cap for _, _, cap in zones)
+            available_after = max(0, remaining_stock.get(resource, 0))
+            idle_delivery_capacity = max(0, total_delivery - totals[logistics.agent].get(resource, 0))
+            cannot_be_carried = max(0, available_after - idle_delivery_capacity)
+            if cannot_be_carried:
+                undeliverable[resource] = cannot_be_carried
+            continue
         for tier in (1, 2, 3):
             tier_claims = [c for c in claims if _claim_tier(c.agent) == tier]
             zone_caps = {c.agent: _zone_unit_caps(c, resource, scenario) for c in tier_claims}
@@ -372,7 +438,7 @@ def _allocation_by_zone(claims, scenario, scores):
                         award -= placed
                 remaining_stock[resource] -= awards.get(claim.agent, 0)
     unassigned = {r: amount for r, amount in remaining_stock.items() if amount > 0}
-    return totals, by_zone, unassigned, by_agent_zone
+    return totals, by_zone, unassigned, by_agent_zone, undeliverable
 
 
 def _coverage_by_zone(allocation_by_zone, by_agent_zone, claims, scenario):
@@ -382,8 +448,10 @@ def _coverage_by_zone(allocation_by_zone, by_agent_zone, claims, scenario):
         tiers = {
             "critical_patients": (demand.critical_patients, "medical"),
             "stranded": (demand.stranded_non_critical, "shelter"),
-            "supply_dependent": (demand.supply_dependent, "logistics"),
         }
+        if scenario.operations.supply_horizon_days is None:
+            # Preserve the legacy population coverage view for old scenarios.
+            tiers["supply_dependent"] = (demand.supply_dependent, "logistics")
         zone_result = {}
         for tier, (people, agent) in tiers.items():
             claim = next((c for c in claims if c.agent == agent), None)
@@ -403,6 +471,40 @@ def _coverage_by_zone(allocation_by_zone, by_agent_zone, claims, scenario):
                 "coverage_percent": round(100 * served / people, 1),
             }
         coverage[zone.name] = zone_result
+    return coverage
+
+
+def _supply_coverage(by_agent_zone, claims, scenario):
+    if scenario.operations.supply_horizon_days is None:
+        return {}
+    logistics = next((claim for claim in claims if claim.agent == "logistics"), None)
+    coverage = {}
+    for zone in scenario.zones:
+        need = supply_need(zone, scenario.operations)
+        vehicles = by_agent_zone.get("logistics", {}).get(zone.name, {})
+        window = logistics.time_window_hrs if logistics else 0
+        capacity = delivery_capacity(scenario, zone, window, vehicles)
+        awarded = by_agent_zone.get("logistics", {}).get(zone.name, {})
+        people = int(need["people_in_need"])
+        record = {}
+        for resource, rate in (("food_packs", scenario.operations.food_packs_per_person_day),
+                               ("water_liters", scenario.operations.water_liters_per_person_day)):
+            needed = need[resource]
+            delivered = int(awarded.get(resource, 0))
+            percent = (None if needed is None else
+                       round(100 * delivered / needed, 1) if needed else 100.0)
+            record[resource] = {
+                "needed": needed,
+                "delivered": delivered,
+                "delivery_capacity": int(capacity[resource]),
+                "days_of_cover": days_of_cover(delivered, people, rate),
+                "coverage_percent": percent,
+                "delivery_limited": bool(needed is not None and needed > 0
+                                          and capacity[resource] < needed),
+            }
+        record["food_days_of_cover"] = record["food_packs"]["days_of_cover"]
+        record["water_days_of_cover"] = record["water_liters"]["days_of_cover"]
+        coverage[zone.name] = record
     return coverage
 
 
@@ -582,10 +684,11 @@ def finalize(state: NegotiationState, llm, tracer: Tracer) -> Plan:
         _claim_tier(claim.agent), *_claim_order(claim, state.scenario)
     ))
     scores = {claim.agent: score_claim(claim, state.scenario) for claim in claims}
-    allocation, allocation_by_zone, unassigned_resources, by_agent_zone = _allocation_by_zone(
+    allocation, allocation_by_zone, unassigned_resources, by_agent_zone, undeliverable_stock = _allocation_by_zone(
         claims, state.scenario, scores
     )
     coverage = _coverage_by_zone(allocation_by_zone, by_agent_zone, claims, state.scenario)
+    supply_coverage = _supply_coverage(by_agent_zone, claims, state.scenario)
     total_critical = sum(demand_by_zone(zone).critical_patients for zone in state.scenario.zones)
     served_critical = sum(value["critical_patients"]["people_served"]
                           for value in coverage.values())
@@ -654,6 +757,21 @@ def finalize(state: NegotiationState, llm, tracer: Tracer) -> Plan:
 
     deficits = over_subscribed(state.claims, state.scenario)
     unresolved = _unresolved_shortfalls(state, allocation) if deficits else []
+    supply_demand_gaps = {}
+    if state.scenario.operations.supply_horizon_days is not None:
+        inventory = {canonical_resource(name): amount for name, amount in state.scenario.resources.items()}
+        for resource, rate in (("food_packs", state.scenario.operations.food_packs_per_person_day),
+                               ("water_liters", state.scenario.operations.water_liters_per_person_day)):
+            if rate is None:
+                continue
+            demand = sum(int(supply_need(zone, state.scenario.operations).get(resource) or 0)
+                         for zone in state.scenario.zones)
+            gap = max(0, demand - inventory.get(resource, 0))
+            if gap:
+                supply_demand_gaps[resource] = gap
+                if not any(item.resource == resource for item in unresolved):
+                    unresolved.append(UnresolvedShortfall(resource=resource, unmet_amount=gap,
+                                                          agents=["logistics"]))
     prior_claims = {claim.agent: claim for claim in state.claims}
     for revision in reversed(state.claim_revisions):
         if revision.previous_claim is not None:
@@ -664,7 +782,18 @@ def finalize(state: NegotiationState, llm, tracer: Tracer) -> Plan:
         for resource in sorted(prior_deficits)
         if resource not in deficits
     ]
-    status = "constrained" if deficits or life_safety_gap else "resolved"
+    supply_risks = []
+    supply_risks.extend(f"{resource}: stock is {amount} below configured horizon need."
+                        for resource, amount in supply_demand_gaps.items())
+    for zone_name, metrics in supply_coverage.items():
+        for resource in ("food_packs", "water_liters"):
+            item = metrics[resource]
+            if item["delivery_limited"]:
+                suffix = ("stock available but no deliverable route"
+                          if item["delivery_capacity"] == 0 and undeliverable_stock.get(resource, 0) > 0
+                          else "delivery capacity below need")
+                supply_risks.append(f"{zone_name}: {resource} {suffix}.")
+    status = "constrained" if deficits or life_safety_gap or unresolved else "resolved"
 
     disputes = _disputes_for_allocation(state, claims, allocation)
 
@@ -677,15 +806,16 @@ def finalize(state: NegotiationState, llm, tracer: Tracer) -> Plan:
         disputes_log=disputes,
         status=status,
         unresolved_shortfalls=unresolved,
-        risks=[f"{claim.agent}: medical receiving support is unverified or insufficient"
-               for claim in state.claims if claim.unverified_support],
+        risks=[*[f"{claim.agent}: medical receiving support is unverified or insufficient"
+               for claim in state.claims if claim.unverified_support], *supply_risks],
         allocation_by_zone=allocation_by_zone,
         coverage=coverage,
         life_safety_gap=life_safety_gap,
         unassigned_resources=unassigned_resources,
         feasibility_report={
             "checks_passed": ["demand partitions are disjoint", "allocation capped by inventory and useful unit cap"],
-            "checks_failed": ["oversubscribed demand remains"] if deficits else [],
+            "checks_failed": (["oversubscribed demand remains"] if deficits else [])
+                             + (["supply stock is below horizon need"] if supply_demand_gaps else []),
             "unresolved_shortfalls": [item.model_dump() for item in unresolved],
             "unverified_assumptions": sorted({
                 label for label, unknown in (
@@ -703,6 +833,8 @@ def finalize(state: NegotiationState, llm, tracer: Tracer) -> Plan:
               if resource not in state.scenario.resources),
         ],
         reasoning_source=reasoning_source,
+        supply_coverage=supply_coverage,
+        undeliverable_stock=undeliverable_stock,
     )
     tracer.log("mediator", "system", "plan", plan.model_dump())
     return plan

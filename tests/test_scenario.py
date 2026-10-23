@@ -438,6 +438,23 @@ def _preset_patch_for(key: str, scenario: Scenario) -> dict:
             "hospital_capacity": {},
             "urgency_hints": {"logistics": 9},
         },
+        "supply_depot_flooded": {
+            "is_valid": True, "summary": "Depot losses", "affected_agents": ["logistics"],
+            "road_access": {}, "roads": {}, "zone_casualties": {}, "zone_stranded": {},
+            "resource_loss": {"food_packs": 100, "water_liters": 1000},
+            "hospital_capacity": {}, "urgency_hints": {},
+        },
+        "wayanad_bridge_collapse": {
+            "is_valid": True, "summary": "Bridge collapsed", "affected_agents": ["logistics"],
+            "road_access": {"Zone A": 0.0}, "roads": {"Zone A": "blocked"},
+            "zone_casualties": {}, "zone_stranded": {}, "resource_loss": {},
+            "hospital_capacity": {}, "urgency_hints": {},
+        },
+        "wayanad_new_casualties": {
+            "is_valid": True, "summary": "Patients arrived", "affected_agents": ["medical"],
+            "road_access": {}, "roads": {}, "zone_casualties": {"Zone B": 20},
+            "zone_stranded": {}, "resource_loss": {}, "hospital_capacity": {}, "urgency_hints": {},
+        },
     }
     return patches[key]
 

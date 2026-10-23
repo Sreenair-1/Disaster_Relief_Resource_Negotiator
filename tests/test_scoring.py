@@ -41,3 +41,17 @@ def test_over_subscription(sample_scenario):
               time_window_hrs=1, justification="x", fallback_option="y"),
     ]
     assert over_subscribed(claims, sample_scenario) == {"boats": 1}
+
+
+def test_supply_aliases_are_canonical_in_oversubscription():
+    scenario = Scenario.model_validate({
+        "disaster_type": "flood", "zones": [{"name": "A", "population": 1}],
+        "resources": {"food_packs": 10},
+    })
+    claims = [
+        Claim(agent="a", resources={"food": 8}, people_affected=1, urgency=1,
+              time_window_hrs=1, justification="x", fallback_option="y"),
+        Claim(agent="b", resources={"food_rations": 7}, people_affected=1, urgency=1,
+              time_window_hrs=1, justification="x", fallback_option="y"),
+    ]
+    assert over_subscribed(claims, scenario) == {"food_packs": 5}

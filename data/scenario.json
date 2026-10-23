@@ -1,18 +1,62 @@
 {
   "disaster_type": "flood",
   "zones": [
-    {"name": "Zone A", "population": 500, "stranded": 300, "critical_patients": 0, "road_access": 0.5, "supply_dependent": 150},
-    {"name": "Zone B", "population": 120, "stranded": 12, "critical_patients": 12, "road_access": 0.3, "supply_dependent": 50}
+    {
+      "name": "Zone A",
+      "population": 500,
+      "stranded": 300,
+      "critical_patients": 0,
+      "road_access": 0.5,
+      "supply_dependent": 150
+    },
+    {
+      "name": "Zone B",
+      "population": 120,
+      "stranded": 12,
+      "critical_patients": 12,
+      "road_access": 0.3,
+      "supply_dependent": 50
+    }
   ],
-  "resources": {"boats": 3},
-  "hospitals": ["Regional Hospital"],
-  "roads": {"Zone A": "blocked", "Zone B": "flooded"},
+  "resources": {
+    "boats": 3,
+    "food_packs": 717,
+    "water_liters": 6144
+  },
+  "hospitals": [
+    "Regional Hospital"
+  ],
+  "roads": {
+    "Zone A": "blocked",
+    "Zone B": "flooded"
+  },
   "operations": {
     "boat_capacity_persons": 50,
-    "trip_hours_by_zone": {"Zone A": 2.0, "Zone B": 2.0},
+    "trip_hours_by_zone": {
+      "Zone A": 2.0,
+      "Zone B": 2.0
+    },
     "ambulance_capacity": 2,
     "ambulance_availability": null,
     "truck_capacity_persons": null,
-    "hospitals": [{"name": "Regional Hospital", "icu_beds_free": null, "accepts_transfers": null, "travel_hours": null}]
+    "hospitals": [
+      {
+        "name": "Regional Hospital",
+        "icu_beds_free": null,
+        "accepts_transfers": null,
+        "travel_hours": null
+      }
+    ],
+    "food_packs_per_person_day": 1,
+    "water_liters_per_person_day": 10,
+    "supply_horizon_days": 2,
+    "truck_payload_packs": 1000,
+    "truck_payload_liters": 10000,
+    "boat_payload_packs": 200,
+    "boat_payload_liters": 2000,
+    "truck_trip_hours_by_zone": {
+      "Zone A": 2.0,
+      "Zone B": 2.0
+    }
   }
 }

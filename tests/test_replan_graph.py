@@ -103,3 +103,38 @@ def test_replan_road_change_requires_referencing_agents_to_reclaim(monkeypatch, 
     assert "medical" in updated.affected_agents
     assert "shelter" not in updated.affected_agents
 
+
+def test_depot_loss_requeries_logistics_and_reduces_supply_coverage(monkeypatch, tracer):
+    from agents.mediator import finalize
+    import graph.replan as graph
+    from lib.llm import StubLLM
+    from lib.schemas import Operations
+    from agents.scenario import PRESET_EVENTS
+
+    scenario = Scenario(
+        disaster_type="flood", zones=[Zone(name="Zone A", population=20, supply_dependent=20)],
+        resources={"trucks": 2, "food_packs": 20, "water_liters": 200},
+        operations=Operations(supply_horizon_days=1, food_packs_per_person_day=1,
+                              water_liters_per_person_day=10, truck_capacity_persons=10,
+                              truck_payload_packs=20, truck_payload_liters=200,
+                              truck_trip_hours_by_zone={"Zone A": 1}),
+    )
+    initial_claim = Claim(
+        agent="logistics", resources={"trucks": 2, "food_packs": 20, "water_liters": 200},
+        people_affected=20, urgency=8, time_window_hrs=1,
+        justification="Zone A supply request", fallback_option="phase deliveries",
+    )
+    original = NegotiationState(scenario=scenario, claims=[initial_claim])
+    original.plan = finalize(original, StubLLM([{"justifications": {"logistics": "Evidence."}}]), tracer)
+    assert original.plan.supply_coverage["Zone A"]["food_packs"]["delivered"] == 20
+    queried = []
+    monkeypatch.setattr(graph, "CLAIMERS", {
+        "logistics": lambda state, llm, tracer: (queried.append("logistics") or initial_claim),
+    })
+    monkeypatch.setattr(graph, "mediator_finalize", finalize)
+    updated = graph.replan(original, PRESET_EVENTS["supply_depot_flooded"],
+                          StubLLM([{"justifications": {"logistics": "Evidence."}}]), tracer)
+    assert "logistics" in updated.affected_agents
+    assert queried == ["logistics"]
+    assert updated.plan.supply_coverage["Zone A"]["food_packs"]["delivered"] == 12
+

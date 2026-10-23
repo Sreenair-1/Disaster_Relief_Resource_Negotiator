@@ -9,6 +9,61 @@ from lib.schemas import Claim, Operations, Scenario, Zone
 GROUND_ACCESS_THRESHOLD = 0.5
 
 
+def canonical_resource(name: str) -> str:
+    """Normalize food/water aliases while preserving other resource names."""
+    key = re.sub(r"[\s-]+", "_", name.strip().casefold())
+    return {"food": "food_packs", "food_rations": "food_packs",
+            "water": "water_liters", "drinking_water": "water_liters"}.get(key, name.strip())
+
+
+def supply_need(zone: Zone, operations: Operations) -> dict[str, int | float | None]:
+    """Return horizon requirements from the disjoint population partition."""
+    people = demand_by_zone(zone).total_union
+    horizon = operations.supply_horizon_days
+    food_rate = operations.food_packs_per_person_day
+    water_rate = operations.water_liters_per_person_day
+    return {
+        "people_in_need": people,
+        "food_packs": (ceil(people * food_rate * horizon) if food_rate is not None and horizon is not None else None),
+        "water_liters": (ceil(people * water_rate * horizon) if water_rate is not None and horizon is not None else None),
+    }
+
+
+def delivery_capacity(scenario: Scenario, zone: Zone, window_hrs: float,
+                      vehicles: dict[str, int] | None = None) -> dict[str, int | list[str]]:
+    """Return food/water payload deliverable by the specified zone vehicles."""
+    vehicles = vehicles or {}
+    operations = scenario.operations
+    truck_hours = operations.truck_trip_hours_by_zone.get(
+        zone.name, operations.trip_hours_by_zone.get(zone.name))
+    boat_hours = operations.trip_hours_by_zone.get(zone.name)
+    trucks = max(0, vehicles.get("trucks", 0)) if ground_route_feasible(zone, scenario) else 0
+    boats = max(0, vehicles.get("boats", 0)) if boat_hours is not None else 0
+    truck_trips = floor(window_hrs / truck_hours) if trucks and truck_hours and truck_hours > 0 else 0
+    boat_trips = floor(window_hrs / boat_hours) if boats and boat_hours and boat_hours > 0 else 0
+    modes = []
+    if trucks and truck_trips:
+        modes.append("truck")
+    if boats and boat_trips:
+        modes.append("boat")
+    return {
+        "food_packs": trucks * (operations.truck_payload_packs or 0) * truck_trips
+                      + boats * (operations.boat_payload_packs or 0) * boat_trips,
+        "water_liters": trucks * (operations.truck_payload_liters or 0) * truck_trips
+                        + boats * (operations.boat_payload_liters or 0) * boat_trips,
+        "modes": modes,
+    }
+
+
+def days_of_cover(quantity: int | float | None, people: int,
+                  per_person_day: float | None) -> float | None:
+    """Convert stock into population cover; unknown inputs stay unknown."""
+    if quantity is None or per_person_day is None or people <= 0:
+        return None
+    daily_need = people * per_person_day
+    return round(quantity / daily_need, 2) if daily_need > 0 else None
+
+
 @dataclass(frozen=True)
 class ZoneDemand:
     critical_patients: int
@@ -62,6 +117,30 @@ def validate_claim_facts(claim: Claim, scenario: Scenario) -> tuple[Claim, list[
                 text = text[:match.start()] + f"{expected:g}-hour round trip" + text[match.end():]
                 corrections.append(f"round-trip time corrected from {old:g} to {expected:g} hours")
 
+    expected_facts = (
+        (scenario.operations.food_packs_per_person_day, r"(?P<num>[\d,.]+)\s*(?:food\s*)?(?:packs?|rations?)\s+per\s+(?:person|resident)(?:\s+per\s+day)?", "food packs per person-day"),
+        (scenario.operations.water_liters_per_person_day, r"(?P<num>[\d,.]+)\s*(?:water\s+)?lit(?:er|re)s?\s+(?:of\s+water\s+)?per\s+(?:person|resident)(?:\s+per\s+day)?", "water liters per person-day"),
+        (scenario.operations.truck_payload_packs, r"(?:truck|lorry)\s+(?:payload|carries|capacity)\s*(?:of|is|=)?\s*([\d,]+)\s*(?:food\s+)?packs?", "truck food payload"),
+        (scenario.operations.truck_payload_liters, r"(?:truck|lorry)\s+(?:payload|carries|capacity)\s*(?:of|is|=)?\s*([\d,]+)\s*lit(?:er|re)s?", "truck water payload"),
+        (scenario.operations.boat_payload_packs, r"boat\s+(?:payload|carries|capacity)\s*(?:of|is|=)?\s*([\d,]+)\s*(?:food\s+)?packs?", "boat food payload"),
+        (scenario.operations.boat_payload_liters, r"boat\s+(?:payload|carries|capacity)\s*(?:of|is|=)?\s*([\d,]+)\s*lit(?:er|re)s?", "boat water payload"),
+    )
+    for expected, pattern_text, label in expected_facts:
+        if expected is None:
+            continue
+        pattern = re.compile(pattern_text, re.I)
+        match = pattern.search(text)
+        if not match:
+            continue
+        number_text = match.groupdict().get("num") or (match.group(1) if match.lastindex else match.group(0))
+        number_match = re.search(r"\d[\d,]*(?:\.\d+)?", number_text)
+        if not number_match:
+            continue
+        old = float(number_match.group().replace(",", ""))
+        if old != expected:
+            text = text[:match.start()] + f"{expected:g} {label}" + text[match.end():]
+            corrections.append(f"{label} corrected from {old:g} to {expected:g}")
+
     updates = {"justification": text, "contradicts_data": bool(corrections)} if corrections else {}
     return (claim.model_copy(update=updates) if updates else claim), corrections
 
@@ -71,15 +150,29 @@ def clamp_claim_resources(claim: Claim, scenario: Scenario) -> tuple[Claim, list
     resources: dict[str, int] = {}
     non_inventory: list[dict[str, int]] = []
     changes: dict[str, dict[str, int]] = {}
-    for name, requested in claim.resources.items():
-        if name not in scenario.resources:
+    inventory = {canonical_resource(name): amount for name, amount in scenario.resources.items()}
+    demand = {resource: sum(supply_need(zone, scenario.operations).get(resource) or 0
+                            for zone in scenario.zones)
+              for resource in ("food_packs", "water_liters")}
+    normalized: dict[str, int] = {}
+    for raw_name, requested in claim.resources.items():
+        name = canonical_resource(raw_name)
+        normalized[name] = normalized.get(name, 0) + requested
+    for name, requested in normalized.items():
+        if name not in inventory:
             non_inventory.append({"resource": name, "requested": requested})
             continue
-        allowed = min(max(0, requested), scenario.resources[name])
+        limit = inventory[name]
+        configured = (scenario.operations.supply_horizon_days is not None and
+                      (scenario.operations.food_packs_per_person_day if name == "food_packs"
+                       else scenario.operations.water_liters_per_person_day) is not None)
+        if name in demand and (demand[name] > 0 or configured):
+            limit = min(limit, demand[name])
+        allowed = min(max(0, requested), limit)
         if allowed != requested:
             changes[name] = {"requested": requested, "allowed": allowed}
         if allowed:
-            resources[name] = allowed
+            resources[name] = resources.get(name, 0) + allowed
     clean = claim.model_copy(update={"resources": resources}) if resources != claim.resources else claim
     return clean, non_inventory, changes
 
@@ -207,7 +300,17 @@ def ground_route_feasible(zone: Zone, scenario: Scenario) -> bool:
 
 def unit_cap(claim: Claim, scenario: Scenario, resource: str) -> int:
     """Maximum useful units of a requested resource under known scenario capacity."""
-    requested = max(0, claim.resources.get(resource, 0))
+    resource = canonical_resource(resource)
+    requested = max(0, sum(amount for name, amount in claim.resources.items()
+                            if canonical_resource(name) == resource))
+    if resource in {"food_packs", "water_liters"}:
+        need = sum(supply_need(zone, scenario.operations).get(resource) or 0
+                   for zone in scenario.zones)
+        rate = (scenario.operations.food_packs_per_person_day if resource == "food_packs"
+                else scenario.operations.water_liters_per_person_day)
+        if scenario.operations.supply_horizon_days is not None and rate is not None:
+            return min(requested, need)
+        return requested
     if resource == "shelter_beds":
         return min(requested, claim.people_affected)
     if resource != "boats":

@@ -6,33 +6,39 @@
       "population": 8500,
       "stranded": 2200,
       "critical_patients": 95,
-      "road_access": 0.1
+      "road_access": 0.1,
+      "supply_dependent": 6300
     },
     {
       "name": "Vythiri High Range",
       "population": 11000,
       "stranded": 1800,
       "critical_patients": 45,
-      "road_access": 0.3
+      "road_access": 0.3,
+      "supply_dependent": 9200
     },
     {
       "name": "Mananthavady Riverine",
       "population": 14500,
       "stranded": 3600,
       "critical_patients": 80,
-      "road_access": 0.4
+      "road_access": 0.4,
+      "supply_dependent": 10900
     },
     {
       "name": "Sulthan Bathery Lowland",
       "population": 16000,
       "stranded": 2900,
       "critical_patients": 50,
-      "road_access": 0.6
+      "road_access": 0.6,
+      "supply_dependent": 13100
     }
   ],
   "resources": {
     "boats": 10,
-    "trucks": 14
+    "trucks": 14,
+    "food_packs": 70000,
+    "water_liters": 600000
   },
   "hospitals": [
     "Wayanad District Hospital Mananthavady",
@@ -50,9 +56,32 @@
     "ambulance_capacity": null,
     "ambulance_availability": null,
     "hospitals": [
-      {"name": "Wayanad District Hospital Mananthavady", "icu_beds_free": null, "accepts_transfers": null, "travel_hours": null},
-      {"name": "Sulthan Bathery Taluk Headquarters Hospital", "icu_beds_free": null, "accepts_transfers": null, "travel_hours": null}
-    ]
+      {
+        "name": "Wayanad District Hospital Mananthavady",
+        "icu_beds_free": null,
+        "accepts_transfers": null,
+        "travel_hours": null
+      },
+      {
+        "name": "Sulthan Bathery Taluk Headquarters Hospital",
+        "icu_beds_free": null,
+        "accepts_transfers": null,
+        "travel_hours": null
+      }
+    ],
+    "food_packs_per_person_day": 1,
+    "water_liters_per_person_day": 10,
+    "supply_horizon_days": 2,
+    "truck_payload_packs": 1000,
+    "truck_payload_liters": 10000,
+    "boat_payload_packs": 200,
+    "boat_payload_liters": 2000,
+    "truck_trip_hours_by_zone": {
+      "Meppadi Valley": 2.0,
+      "Vythiri High Range": 4.0,
+      "Mananthavady Riverine": 3.0,
+      "Sulthan Bathery Lowland": 2.0
+    }
   },
   "roads": {
     "Meppadi Valley": "blocked",

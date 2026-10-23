@@ -1,6 +1,6 @@
 from agents.mediator import decide_next, finalize
 from lib.llm import StubLLM
-from lib.schemas import Claim, ClaimRevision, MediatorAction, NegotiationState, Plan
+from lib.schemas import Claim, ClaimRevision, MediatorAction, NegotiationState, Operations, Plan, Scenario, Zone
 
 
 class MemoryTracer:
@@ -284,6 +284,9 @@ def test_non_inventory_requests_are_reported_outside_shortfalls(sample_scenario)
 
 
 def test_only_a_resolved_prior_deficit_appears_in_conflicts_resolved(sample_scenario):
+    sample_scenario.resources.pop("food_packs", None)
+    sample_scenario.resources.pop("water_liters", None)
+    sample_scenario.operations.supply_horizon_days = None
     medical = _claim("medical", {"boats": 1}, 12, 10, 2, uncertainty=0)
     shelter = _claim("shelter", {"boats": 1}, 300, 8, 6, uncertainty=0)
     state = NegotiationState(scenario=sample_scenario, claims=[medical, shelter],
@@ -318,3 +321,60 @@ def test_reduced_claim_is_listed_once_in_disputes(sample_scenario):
 
     medical_disputes = [item for item in plan.disputes_log if "medical" in item.casefold()]
     assert len(medical_disputes) == 1
+
+
+def test_supply_awards_follow_vehicle_capacity_and_track_undeliverable_stock():
+    scenario = Scenario(
+        disaster_type="flood", zones=[Zone(name="A", population=20, supply_dependent=20)],
+        resources={"trucks": 1, "food_packs": 20},
+        operations=Operations(supply_horizon_days=1, food_packs_per_person_day=1,
+                              truck_payload_packs=10, truck_capacity_persons=10,
+                              truck_trip_hours_by_zone={"A": 2}),
+    )
+    claim = _claim("logistics", {"trucks": 1, "food_packs": 20}, 20, 8, 2)
+    state = NegotiationState(scenario=scenario, claims=[claim])
+    llm = StubLLM([{"justifications": {"logistics": "Evidence based."},
+                    "conflicts_resolved": [], "disputes_log": []}])
+    plan = finalize(state, llm, MemoryTracer())
+    assert plan.allocation["logistics"]["trucks"] == 1
+    assert plan.allocation["logistics"]["food_packs"] == 10
+    assert plan.allocation_by_zone["A"]["food_packs"] == 10
+    assert plan.undeliverable_stock["food_packs"] == 10
+    assert plan.supply_coverage["A"]["food_packs"]["delivery_limited"] is True
+
+
+def test_legacy_scenario_omits_supply_coverage():
+    scenario = Scenario(disaster_type="flood", zones=[Zone(name="A", population=10, critical_patients=1)],
+                        resources={"boats": 1})
+    state = NegotiationState(scenario=scenario, claims=[_claim("medical", {"boats": 1}, 1, 10, 2)])
+    plan = finalize(state, StubLLM([{"justifications": {"medical": "Evidence."}}]), MemoryTracer())
+    assert plan.supply_coverage == {}
+    assert plan.undeliverable_stock == {}
+
+
+def test_stock_without_a_vehicle_is_undeliverable_not_awarded():
+    scenario = Scenario(
+        disaster_type="flood", zones=[Zone(name="A", population=10, supply_dependent=10)],
+        resources={"food_packs": 10},
+        operations=Operations(supply_horizon_days=1, food_packs_per_person_day=1),
+    )
+    claim = _claim("logistics", {"food_packs": 10}, 10, 7, 2)
+    plan = finalize(NegotiationState(scenario=scenario, claims=[claim]),
+                    StubLLM([{"justifications": {"logistics": "Evidence."}}]), MemoryTracer())
+    assert plan.allocation["logistics"].get("food_packs", 0) == 0
+    assert plan.undeliverable_stock == {"food_packs": 10}
+    assert not plan.unresolved_shortfalls
+    assert any("no deliverable route" in risk for risk in plan.risks)
+
+
+def test_supply_need_above_stock_is_an_explicit_shortfall():
+    scenario = Scenario(
+        disaster_type="flood", zones=[Zone(name="A", population=10, supply_dependent=10)],
+        resources={"food_packs": 5},
+        operations=Operations(supply_horizon_days=1, food_packs_per_person_day=1),
+    )
+    claim = _claim("logistics", {"food_packs": 5}, 10, 7, 2)
+    plan = finalize(NegotiationState(scenario=scenario, claims=[claim]),
+                    StubLLM([{"justifications": {"logistics": "Evidence."}}]), MemoryTracer())
+    assert [(item.resource, item.unmet_amount) for item in plan.unresolved_shortfalls] == [("food_packs", 5)]
+    assert plan.status == "constrained"

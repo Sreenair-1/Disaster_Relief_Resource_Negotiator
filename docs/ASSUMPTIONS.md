@@ -105,3 +105,39 @@ explicitly assumed for a software demo, not verified local data:
 - `scripts/check_trace.py` validates artifact structure and policy invariants;
   it does not certify that a live run occurred or replace review of the
   downloaded trace and plan.
+
+## Food and water supply model
+
+- One `food_packs` unit means one person-day of food by definition. The
+  `food_packs_per_person_day=1` setting is therefore an assumed conversion
+  used to keep demo quantities readable.
+- `water_liters_per_person_day=10` litres is assumed for this software demo so
+  the unit conversion and inventory checks can be exercised. Sphere Handbook
+  water guidance is something to verify with a qualified response lead before
+  citing or using operationally.
+- `supply_horizon_days=2` is assumed to make the demo plan cover a short
+  planning window; it is not an incident forecast.
+- Truck payloads of 1,000 food packs and 10,000 litres, and boat payloads of
+  200 food packs and 2,000 litres, are assumed demonstration capacities. They
+  are chosen as round values for testing the delivery-capacity calculation and
+  are not vehicle specifications.
+- Scenario food stock is assumed to be 70% of the configured horizon need and
+  water stock 60%. Those assumed ratios keep both supplies scarce while
+  avoiding a claim of verified depot inventory.
+- The depot preset's 40% loss is an assumed event severity chosen to provide a
+  reproducible, non-empty stock diff for the demonstration.
+- Wayanad and Cachar `supply_dependent` counts are explicitly set to the
+  remaining population after stranded residents, an assumed arithmetic
+  partition so the three demand groups do not overlap. The seed retains its
+  existing explicit 150 and 50 demo counts.
+- Trucks use `truck_trip_hours_by_zone`, falling back to the existing
+  `trip_hours_by_zone` when no truck-specific time is present. Boats use
+  `trip_hours_by_zone`. Whole trips only are counted.
+- A boat assigned to evacuation is not also available to carry supplies in the
+  same response window. Supply delivery uses only the boats and trucks
+  allocated to Logistics, preventing same-window double use.
+- Food/water supply coverage is delivered units divided by horizon need;
+  days-of-cover is delivered stock divided by daily zone need. A zone is
+  delivery-limited when its assigned vehicles cannot carry the full horizon
+  need. Undeliverable stock is inventory left over because delivery capacity
+  is lower than remaining stock, not an additional unmet-demand figure.

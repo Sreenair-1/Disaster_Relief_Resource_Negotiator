@@ -10,7 +10,9 @@ from typing import Any
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-from lib.schemas import Plan, Scenario
+from lib.schemas import Claim, Plan, Scenario
+from lib.feasibility import canonical_resource, validate_claim_facts
+from tools.inventory import stock_levels, supply_needs
 
 CORE_AGENTS = {"medical", "shelter", "logistics"}
 
@@ -75,12 +77,14 @@ def validate(events: list[dict[str, Any]], plan: Plan, scenario: Scenario) -> li
     checks.append(("tool results match scenario hospital facts", not contradictions,
                    "; ".join(contradictions) if contradictions else "no unsupported hospital facts"))
 
+    inventory = {canonical_resource(k): v for k, v in scenario.resources.items()}
     used: dict[str, int] = {}
     for awards in plan.allocation.values():
         for resource, amount in awards.items():
-            used[resource] = used.get(resource, 0) + amount
-    overspend = [f"{r}: {n}>{scenario.resources.get(r, 0)}" for r, n in used.items()
-                 if n > scenario.resources.get(r, 0)]
+            key = canonical_resource(resource)
+            used[key] = used.get(key, 0) + amount
+    overspend = [f"{r}: {n}>{inventory.get(r, 0)}" for r, n in used.items()
+                 if n > inventory.get(r, 0)]
     checks.append(("allocation within inventory", not overspend,
                    "; ".join(overspend) if overspend else "all awarded totals are within stock"))
 
@@ -97,9 +101,88 @@ def validate(events: list[dict[str, Any]], plan: Plan, scenario: Scenario) -> li
                    f"missing or incomplete for {', '.join(weak_justifications)}" if weak_justifications else "all allocated agents cited score, request, and award"))
 
     unknown_shortfalls = [item.resource for item in plan.unresolved_shortfalls
-                          if item.resource not in scenario.resources]
+                          if canonical_resource(item.resource) not in inventory]
     checks.append(("shortfalls use inventory resources", not unknown_shortfalls,
                    f"unknown resources: {', '.join(unknown_shortfalls)}" if unknown_shortfalls else "all shortfalls use listed resources"))
+
+    supply_overs = []
+    for resource in ("food_packs", "water_liters"):
+        awarded = sum(amount for rows in plan.allocation.values()
+                      for name, amount in rows.items() if canonical_resource(name) == resource)
+        if awarded > inventory.get(resource, 0):
+            supply_overs.append(f"{resource}: {awarded}>{inventory.get(resource, 0)} stock")
+        for zone in scenario.zones:
+            amount = plan.allocation_by_zone.get(zone.name, {}).get(resource, 0)
+            if amount > 0:
+                coverage = (plan.supply_coverage or {}).get(zone.name, {})
+                cap = (coverage.get(resource) or {}).get("delivery_capacity", 0)
+                if amount > cap:
+                    supply_overs.append(f"{zone.name} {resource}: {amount}>{cap} deliverable")
+    checks.append(("supply awards within stock and delivery capacity", not supply_overs,
+                   "; ".join(supply_overs) if supply_overs else "supply awards respect both caps"))
+
+    tool_mismatches = []
+    current = scenario.model_copy(deep=True)
+    for event in events:
+        if event.get("type") in {"event_applied", "scenario_event_applied"}:
+            changes = ((event.get("payload") or {}).get("diff") or {}).get("changed_fields") or {}
+            for key, change in changes.items():
+                after = change.get("after")
+                if key == "resources" and isinstance(after, dict):
+                    current.resources = after
+                elif key.startswith("critical_patients:"):
+                    zone = next((z for z in current.zones if z.name == key.split(":", 1)[1]), None)
+                    if zone is not None:
+                        zone.critical_patients = after
+                elif key.startswith("stranded:"):
+                    zone = next((z for z in current.zones if z.name == key.split(":", 1)[1]), None)
+                    if zone is not None:
+                        zone.stranded = after
+        if event.get("type") != "tool_result":
+            continue
+        payload = event.get("payload") or {}
+        if not payload.get("ok"):
+            continue
+        data = payload.get("data") or {}
+        tool = event.get("receiver")
+        if tool == "stock_levels":
+            if "item" in data:
+                expected = stock_levels(current, item=data["item"])
+                if data.get("quantity") != expected.get("quantity") or data.get("resource_key") != expected.get("resource_key"):
+                    tool_mismatches.append("stock_levels contradicts scenario inventory")
+            elif "stocks" in data and data.get("stocks") != current.resources:
+                tool_mismatches.append("stock_levels summary contradicts scenario inventory")
+        elif tool == "supply_needs":
+            expected = supply_needs(current)
+            if data != expected:
+                tool_mismatches.append("supply_needs contradicts scenario demand or operations")
+    checks.append(("stock and supply tool results match scenario", not tool_mismatches,
+                   "; ".join(tool_mismatches) if tool_mismatches else "no tool/scenario mismatch found"))
+
+    invented = []
+    corrections_logged = {}
+    for event in events:
+        if event.get("type") == "claim_corrected":
+            payload = event.get("payload") or {}
+            after = payload.get("after") or {}
+            corrections_logged[str(event.get("sender", "agent"))] = bool(after.get("contradicts_data"))
+    for event in events:
+        if event.get("type") not in {"claim", "claim_revision"}:
+            continue
+        payload = event.get("payload") or {}
+        raw_claim = payload.get("current_claim") if event.get("type") == "claim_revision" else payload
+        try:
+            source_claim = Claim.model_validate(raw_claim)
+            _, corrections = validate_claim_facts(source_claim, scenario)
+        except Exception:
+            continue
+        agent = str(payload.get("agent", "agent"))
+        if corrections and not source_claim.contradicts_data and not corrections_logged.get(agent, False):
+            invented.append(agent)
+    if any(not flagged for flagged in corrections_logged.values()):
+        invented.extend(agent for agent, flagged in corrections_logged.items() if not flagged)
+    checks.append(("no invented payload or per-person facts", not invented,
+                   f"unflagged contradictions: {', '.join(invented)}" if invented else "no unflagged payload/rate contradictions"))
     return checks
 
 

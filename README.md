@@ -70,17 +70,23 @@ against the numeric scores, ranks, requests, and awards before display.
 Preset events apply concrete scenario diffs, including hospital ICU and
 transfer-capacity changes. Replans that remain oversubscribed run one short
 challenge and log each affected agent's before/after reassessment reason.
+Food and water planning is optional for older scenarios. When enabled, the
+Plan tab shows inventory, delivered amounts, percent and days of cover per
+zone, delivery limits, and stock that cannot be delivered. Bundled rates and
+vehicle payloads are assumed demo values in [docs/ASSUMPTIONS.md](docs/ASSUMPTIONS.md);
+verify Sphere Handbook water guidance before citing it.
 
 ## Demo script
 
 1. Load `data/scenarios/wayanad_monsoon_flood.json` and select **Run**. Review
    the first allocation and the three specialist claims.
-2. Inject the preset event `Bridge to Meppadi Valley collapses, cutting all
-   ground road access to Meppadi Valley.` Review the replan allocation.
-3. Enable **Simulate tool failure** and inject `Eight new critical patients
-   arrive in Mananthavady Riverine.` Confirm the tool failure and estimate
-   feedback appear in the transcript.
-4. Disable **Simulate tool failure**. Download **Download trace** as
+2. Inject `Supply depot flooded: 40% of food packs and water lost.` Review the
+   reduced inventory and supply coverage.
+3. Inject `Bridge to Meppadi Valley collapses, cutting all ground road access
+   to Meppadi Valley.` Review the route replan.
+4. Enable **Simulate tool failure** and inject `Eight new critical patients
+   arrive in Vythiri High Range.` Confirm tool failure and estimate feedback.
+5. Disable **Simulate tool failure**. Download **Download trace** as
    `trace_full_run.jsonl` and **Download final plan** as
    `output_full_run.json`, saving both into `samples/`.
 

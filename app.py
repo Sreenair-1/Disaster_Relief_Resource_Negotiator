@@ -212,7 +212,8 @@ def _render_error_and_warnings(result: dict[str, Any]) -> None:
         st.info("Recorded sample, not live. Event injection is disabled in this view.")
 
 
-def _render_plan_tab(plan: dict[str, Any], before_plan: dict[str, Any] | None) -> None:
+def _render_plan_tab(plan: dict[str, Any], before_plan: dict[str, Any] | None,
+                     scenario: Scenario | None = None) -> None:
     summary = summarize_plan(plan)
     if summary["status"] == "resolved" and not plan.get("life_safety_gap", False):
         st.success(f"{summary['status_label']}: {summary['headline']}")
@@ -231,6 +232,33 @@ def _render_plan_tab(plan: dict[str, Any], before_plan: dict[str, Any] | None) -
 
     if plan.get("life_safety_gap", False):
         st.error("There is a critical-patient coverage gap. Review the zone coverage and risks below.")
+
+    if scenario and scenario.operations.supply_horizon_days is not None and any(
+        name in scenario.resources for name in ("food_packs", "food", "food_rations", "water_liters", "water", "drinking_water")
+    ):
+        st.subheader("Food and water supply")
+        st.caption("Days of cover use the configured assumed per-person daily rates and current zone population in need.")
+        inventory = scenario.resources
+        plan_supply = plan.get("supply_coverage") or {}
+        st.write(f"Available stock: **{inventory.get('food_packs', inventory.get('food', inventory.get('food_rations', 0))):,} food packs** · **{inventory.get('water_liters', inventory.get('water', inventory.get('drinking_water', 0))):,} litres of water**")
+        for zone, metrics in plan_supply.items():
+            with st.container(border=True):
+                st.markdown(f"**{zone}**")
+                for resource, label in (("food_packs", "Food"), ("water_liters", "Water")):
+                    item = metrics.get(resource) or {}
+                    needed = item.get("needed")
+                    delivered = int(item.get("delivered", 0) or 0)
+                    if needed is None:
+                        st.caption(f"{label}: need and coverage are unknown; {delivered:,} delivered.")
+                    else:
+                        percent = float(item.get("coverage_percent", 0) or 0)
+                        st.progress(min(1.0, max(0.0, percent / 100)),
+                                    text=f"{label}: {delivered:,} of {needed} ({percent:.1f}%) · {item.get('days_of_cover') if item.get('days_of_cover') is not None else 'unknown'} days of cover")
+                if any((metrics.get(r) or {}).get("delivery_limited") for r in ("food_packs", "water_liters")):
+                    st.warning("Delivery limited: available vehicles cannot carry the full requested supply to this zone.")
+        undeliverable = plan.get("undeliverable_stock") or {}
+        if undeliverable:
+            st.warning("Undeliverable stock: " + ", ".join(f"{amount:,} {name}" for name, amount in undeliverable.items()))
 
     allocation = plan.get("allocation") or {}
     st.subheader("Resource allocation by team")
@@ -357,13 +385,19 @@ def _compose_event(kind: str, zone: str, magnitude: int, custom_text: str,
                    scenario: Scenario | None) -> str:
     if kind == "Custom":
         return custom_text.strip()
+    if kind == "Supply depot flooded":
+        return PRESET_EVENTS["supply_depot_flooded"]
     if kind == "Road or bridge collapse":
         if zone == "Zone A":
             return PRESET_EVENTS["bridge_collapse"]
+        if zone == "Meppadi Valley":
+            return PRESET_EVENTS["wayanad_bridge_collapse"]
         return f"Bridge to {zone} collapses, cutting all ground road access to {zone}."
     if kind == "New critical patients":
         if zone == "Zone B" and magnitude == 8:
             return PRESET_EVENTS["new_casualties"]
+        if zone == "Vythiri High Range" and magnitude == 8:
+            return PRESET_EVENTS["wayanad_new_casualties"]
         return f"{_number_word(magnitude)} new critical patients arrive in {zone}."
     if kind == "Rising water":
         if zone == "Zone A" and magnitude == 100:
@@ -402,7 +436,10 @@ def _render_event_tab(scenario: Scenario | None, result: dict[str, Any], events:
         st.info("Tool failure simulation is not available in this installation.")
 
     st.subheader("Build a what-if event")
-    kinds = ["Road or bridge collapse", "New critical patients", "Rising water", "Hospital full", "Custom"]
+    kinds = ["Road or bridge collapse", "New critical patients", "Rising water", "Hospital full"]
+    if scenario and scenario.operations.supply_horizon_days is not None:
+        kinds.append("Supply depot flooded")
+    kinds.append("Custom")
     kind = st.selectbox("Event type", kinds, key="event_kind", disabled=not live,
                         help="Choose a clear change to test against this scenario.")
     zones = [zone.name for zone in scenario.zones] if scenario and scenario.zones else ["No zone available"]
@@ -500,7 +537,7 @@ def main() -> None:
     with plan_tab:
         plan = result.get("plan") or {}
         if plan:
-            _render_plan_tab(plan, result.get("before_plan"))
+            _render_plan_tab(plan, result.get("before_plan"), scenario)
         elif result.get("error"):
             st.info("A plan will appear here after the API key and scenario are ready.")
         else:

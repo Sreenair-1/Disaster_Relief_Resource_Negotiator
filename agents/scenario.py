@@ -1,17 +1,22 @@
 """Scenario agent – dynamic environment event injector and scenario patcher."""
 
 from pathlib import Path
+import re
 from typing import Any
 
 from pydantic import BaseModel, Field
 
 from lib.schemas import NegotiationState, Scenario, ScenarioDiff, Zone
 from lib.tracing import Tracer
+from lib.feasibility import canonical_resource
 
 _PROMPT_PATH = Path(__file__).parent / "prompts" / "scenario.md"
 _SYSTEM_PROMPT: str | None = None
 
 PRESET_EVENTS: dict[str, str] = {
+    "supply_depot_flooded": "Supply depot flooded: 40% of food packs and water lost.",
+    "wayanad_bridge_collapse": "Bridge to Meppadi Valley collapses, cutting all ground road access to Meppadi Valley.",
+    "wayanad_new_casualties": "Eight new critical patients arrive in Vythiri High Range.",
     "bridge_collapse": (
         "Bridge to Zone A collapses, cutting all ground road access to Zone A."
     ),
@@ -142,13 +147,8 @@ def _apply_patch(scenario: Scenario, patch: ScenarioPatch) -> Scenario:
 
     # 5. Apply resource loss
     for res_name, loss_count in patch.resource_loss.items():
-        matched_key = None
-        for k in new_scenario.resources.keys():
-            kl = k.lower()
-            rl = res_name.lower()
-            if kl == rl or kl == f"{rl}s" or f"{kl}s" == rl:
-                matched_key = k
-                break
+        matched_key = next((k for k in new_scenario.resources
+                            if canonical_resource(k) == canonical_resource(res_name)), None)
         res_key = matched_key or res_name
         current = new_scenario.resources.get(res_key, 0)
         new_scenario.resources[res_key] = max(0, current - abs(int(loss_count)))
@@ -243,6 +243,13 @@ def _preset_patch(state: NegotiationState, text: str) -> ScenarioPatch | None:
     if text == PRESET_EVENTS["bridge_collapse"]:
         return ScenarioPatch(summary="Zone A ground access was cut.", road_access={"Zone A": 0.0},
                              roads={"Zone A": "blocked"}, affected_agents=["medical", "shelter", "logistics"])
+    bridge = re.fullmatch(r"Bridge to (.+) collapses, cutting all ground road access to \1\.", text)
+    if bridge:
+        zone = _match_zone(state.scenario, bridge.group(1))
+        if zone:
+            return ScenarioPatch(summary=f"Ground road access to {zone.name} was cut.",
+                                 road_access={zone.name: 0.0}, roads={zone.name: "blocked"},
+                                 affected_agents=["medical", "shelter", "logistics"])
     if text == PRESET_EVENTS["hospital_capacity"]:
         return ScenarioPatch(summary="Regional Hospital ICU and transfer capacity are exhausted.",
                              hospital_capacity={"Regional Hospital": "full"}, affected_agents=["medical"])
@@ -256,9 +263,31 @@ def _preset_patch(state: NegotiationState, text: str) -> ScenarioPatch | None:
             return ScenarioPatch(summary="Eight critical patients were added in Zone B.",
                                  zone_casualties={zone.name: zone.critical_patients + 8},
                                  affected_agents=["medical"])
+    patient_event = re.fullmatch(r"(\w+) new critical patients arrive in (.+)\.", text)
+    if patient_event:
+        number_words = {"one": 1, "two": 2, "three": 3, "four": 4, "five": 5,
+                        "six": 6, "seven": 7, "eight": 8, "nine": 9, "ten": 10}
+        try:
+            count = int(patient_event.group(1))
+        except ValueError:
+            count = number_words.get(patient_event.group(1).casefold(), 0)
+        zone = _match_zone(state.scenario, patient_event.group(2))
+        if zone and count:
+            return ScenarioPatch(summary=f"{count} critical patients were added in {zone.name}.",
+                                 zone_casualties={zone.name: zone.critical_patients + count},
+                                 affected_agents=["medical"])
     if text == PRESET_EVENTS["resource_loss"] and "boats" in state.scenario.resources:
         return ScenarioPatch(summary="One boat was lost; fuel contamination noted.",
                              resource_loss={"boats": 1}, affected_agents=["logistics", "medical", "shelter"])
+    if text == PRESET_EVENTS["supply_depot_flooded"]:
+        resources = {canonical_resource(k): v for k, v in state.scenario.resources.items()}
+        food, water = resources.get("food_packs"), resources.get("water_liters")
+        if food is not None and water is not None:
+            return ScenarioPatch(
+                summary=f"Depot flood destroyed {round(food * 0.4)} food packs and {round(water * 0.4)} litres of water.",
+                resource_loss={"food_packs": round(food * 0.4), "water_liters": round(water * 0.4)},
+                affected_agents=["logistics"],
+            )
     if text == PRESET_EVENTS["road_blocked"]:
         return ScenarioPatch(summary="Zone B road access was cut.", road_access={"Zone B": 0.0},
                              roads={"Zone B": "blocked"}, affected_agents=["logistics", "medical", "shelter"])

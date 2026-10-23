@@ -1,6 +1,7 @@
 import pytest
 
 from lib.schemas import Scenario
+from lib.feasibility import demand_by_zone
 from lib.toolcall import ToolError, ToolResult, call_tool
 from tools.casualty import casualty_estimate
 from tools.failure import (
@@ -13,7 +14,7 @@ from tools.failure import (
     set_timeout_mode,
 )
 from tools.hospital import GROUND_ACCESS_THRESHOLD, hospital_capacity, receiving_capacity, transport_options
-from tools.inventory import stock_levels, vehicle_inventory
+from tools.inventory import stock_levels, supply_needs, vehicle_inventory
 from tools.population import zone_population
 from tools.registry import TOOLS
 from tools.roads import road_status
@@ -28,7 +29,7 @@ def clean_failure_state():
     reset_failure()
 
 
-def test_registry_contains_all_seven_tools():
+def test_registry_contains_required_tools():
     expected_tools = {
         "hospital_capacity",
         "casualty_estimate",
@@ -37,8 +38,10 @@ def test_registry_contains_all_seven_tools():
         "road_status",
         "vehicle_inventory",
         "stock_levels",
+        "supply_needs",
     }
     assert expected_tools.issubset(set(TOOLS.keys()))
+    assert len(TOOLS) == 10
     for tool_name in expected_tools:
         assert callable(TOOLS[tool_name])
 
@@ -191,6 +194,34 @@ def test_stock_levels_specific(sample_scenario):
     data = stock_levels(sample_scenario, item="boats")
     assert data["quantity"] == 3
     assert data["status"] == "low"
+
+
+def test_supply_tools_follow_scenario_and_preserve_unknown_stock(sample_scenario):
+    food = stock_levels(sample_scenario, item="food")
+    assert food["resource_key"] == "food_packs"
+    assert food["quantity"] == sample_scenario.resources["food_packs"]
+    expected = demand_by_zone(sample_scenario.zones[0]).total_union
+    assert food["days_of_cover"] is not None
+    needs = supply_needs(sample_scenario)
+    assert needs["zones"][sample_scenario.zones[0].name]["people_in_need"] == expected
+
+    unknown_rate = sample_scenario.model_copy(deep=True)
+    unknown_rate.operations.food_packs_per_person_day = None
+    unknown_rate.operations.water_liters_per_person_day = None
+    unknown_needs = supply_needs(unknown_rate)
+    assert unknown_needs["zones"][sample_scenario.zones[0].name]["food_packs"] is None
+    assert unknown_needs["zones"][sample_scenario.zones[0].name]["water_liters"] is None
+
+    unknown = sample_scenario.model_copy(deep=True)
+    unknown.resources.pop("food_packs", None)
+    assert stock_levels(unknown, item="food")["quantity"] is None
+
+
+def test_supply_needs_is_failure_injectable(sample_scenario, tracer):
+    set_failure("supply_needs")
+    result = call_tool("supply_needs", sample_scenario, tracer)
+    assert result.ok is False
+    assert "injected failure" in result.error
 
 
 def test_call_tool_all_registered_tools(sample_scenario, tracer):

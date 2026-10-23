@@ -36,6 +36,9 @@ Medical, Shelter, Logistics, Mediator, and Scenario. Logistics covers both food
 and water supply needs, so a separate supply agent was not needed. `Zone`
 includes `name`, `population`, `stranded`, `critical_patients`, optional
 `supply_dependent`, and `road_access` from 0 to 1. `Operations` holds optional
-transport capacities, trip times, and receiving-facility records; unknown
-hospital values remain `None`. Mediator allocates resources per agent from
-separate claims and explains awards and shortfalls.
+transport capacities, trip times, receiving-facility records, daily food and
+water conversion rates, a supply horizon, and per-vehicle payloads. Those
+per-person rates and capacities are explicit demo assumptions documented in
+[ASSUMPTIONS.md](ASSUMPTIONS.md); supply fields may be omitted for legacy
+scenarios. Mediator allocates resources per agent from separate claims and
+explains awards and shortfalls.

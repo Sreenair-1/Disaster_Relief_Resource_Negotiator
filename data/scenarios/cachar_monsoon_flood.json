@@ -6,33 +6,39 @@
       "population": 18000,
       "stranded": 4200,
       "critical_patients": 140,
-      "road_access": 0.4
+      "road_access": 0.4,
+      "supply_dependent": 13800
     },
     {
       "name": "Lakhipur Sub-Division",
       "population": 12000,
       "stranded": 3100,
       "critical_patients": 75,
-      "road_access": 0.2
+      "road_access": 0.2,
+      "supply_dependent": 8900
     },
     {
       "name": "Sonai River Corridor",
       "population": 9500,
       "stranded": 2800,
       "critical_patients": 60,
-      "road_access": 0.1
+      "road_access": 0.1,
+      "supply_dependent": 6700
     },
     {
       "name": "Katigorah Border Plain",
       "population": 14000,
       "stranded": 5500,
       "critical_patients": 90,
-      "road_access": 0.0
+      "road_access": 0.0,
+      "supply_dependent": 8500
     }
   ],
   "resources": {
     "boats": 12,
-    "trucks": 8
+    "trucks": 8,
+    "food_packs": 74900,
+    "water_liters": 642000
   },
   "hospitals": [
     "Silchar Medical College Hospital",
@@ -43,5 +49,15 @@
     "Lakhipur Sub-Division": "blocked",
     "Sonai River Corridor": "submerged",
     "Katigorah Border Plain": "cut_off"
+  },
+  "operations": {
+    "food_packs_per_person_day": 1,
+    "water_liters_per_person_day": 10,
+    "supply_horizon_days": 2,
+    "truck_payload_packs": 1000,
+    "truck_payload_liters": 10000,
+    "boat_payload_packs": 200,
+    "boat_payload_liters": 2000,
+    "truck_trip_hours_by_zone": {}
   }
 }

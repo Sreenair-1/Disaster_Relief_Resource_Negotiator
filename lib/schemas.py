@@ -30,11 +30,19 @@ class Operations(BaseModel):
     ambulance_capacity: int | None = Field(default=None, ge=0)
     ambulance_availability: int | None = Field(default=None, ge=0)
     truck_capacity_persons: int | None = Field(default=None, gt=0)
+    food_packs_per_person_day: float | None = Field(default=None, gt=0)
+    water_liters_per_person_day: float | None = Field(default=None, gt=0)
+    supply_horizon_days: float | None = Field(default=None, gt=0)
+    truck_payload_packs: int | None = Field(default=None, gt=0)
+    truck_payload_liters: int | None = Field(default=None, gt=0)
+    boat_payload_packs: int | None = Field(default=None, gt=0)
+    boat_payload_liters: int | None = Field(default=None, gt=0)
+    truck_trip_hours_by_zone: dict[str, float] = Field(default_factory=dict)
     hospitals: list[Hospital] = Field(default_factory=list)
 
     @model_validator(mode="after")
     def validate_trip_times(self):
-        if any(hours <= 0 for hours in self.trip_hours_by_zone.values()):
+        if any(hours <= 0 for hours in (*self.trip_hours_by_zone.values(), *self.truck_trip_hours_by_zone.values())):
             raise ValueError("trip hours by zone must be positive")
         return self
 
@@ -151,6 +159,8 @@ class Plan(BaseModel):
     life_safety_gap: bool = False
     unassigned_resources: dict[str, int] = Field(default_factory=dict)
     reasoning_source: str = "llm"
+    supply_coverage: dict[str, Any] = Field(default_factory=dict)
+    undeliverable_stock: dict[str, int] = Field(default_factory=dict)
 
 
 class ScenarioDiff(BaseModel):

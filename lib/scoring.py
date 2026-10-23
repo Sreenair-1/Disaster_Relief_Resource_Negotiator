@@ -1,7 +1,7 @@
 from collections import defaultdict
 
 from lib.schemas import Claim, Scenario
-from lib.feasibility import unit_cap
+from lib.feasibility import canonical_resource, unit_cap
 
 # Demo policy weights; see docs/ASSUMPTIONS.md. These are tunable priorities,
 # not measured clinical or operational constants.
@@ -67,11 +67,14 @@ def over_subscribed(claims: list[Claim], scenario: Scenario) -> dict[str, int]:
     requested: defaultdict[str, int] = defaultdict(int)
     for claim in claims:
         for resource, amount in claim.resources.items():
-            if resource not in scenario.resources:
+            canonical = canonical_resource(resource)
+            inventory = {canonical_resource(name) for name in scenario.resources}
+            if canonical not in inventory:
                 continue
-            requested[resource] += amount
+            requested[canonical] += amount
+    stock = {canonical_resource(name): amount for name, amount in scenario.resources.items()}
     return {
-        resource: amount - scenario.resources.get(resource, 0)
+        resource: amount - stock.get(resource, 0)
         for resource, amount in requested.items()
-        if amount > scenario.resources.get(resource, 0)
+        if amount > stock.get(resource, 0)
     }

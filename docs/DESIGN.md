@@ -40,7 +40,7 @@ flowchart TD
 
   MED -->|hospital_capacity, casualty_estimate| TOOLS[lib.toolcall / tools.registry]
   SHEL -->|shelter_capacity, zone_population| TOOLS
-  LOG -->|road_status, vehicle_inventory, stock_levels| TOOLS
+  LOG -->|road_status, vehicle_inventory, stock_levels, supply_needs| TOOLS
   TOOLS -->|ToolResult / failure details| MED
   TOOLS -->|ToolResult / failure details| SHEL
   TOOLS -->|ToolResult / failure details| LOG
@@ -60,9 +60,44 @@ flowchart TD
 
 Each need agent calls tools through `lib.toolcall.call_tool`. That boundary
 looks up the function in `tools.registry.TOOLS`, records the request and
-result, catches `ToolError`, and returns `ToolResult`. The seven registered
-tools are `hospital_capacity`, `casualty_estimate`, `shelter_capacity`,
-`zone_population`, `road_status`, `vehicle_inventory`, and `stock_levels`.
+result, catches `ToolError`, and returns `ToolResult`. Ten tools are registered:
+`hospital_capacity`, `receiving_capacity`, `transport_options`,
+`casualty_estimate`, `shelter_capacity`, `zone_population`, `road_status`,
+`vehicle_inventory`, `stock_levels`, and `supply_needs`. `stock_levels` accepts
+food/water aliases and returns scenario-backed quantities; unknown quantities
+or rates remain `null`. Configured supply status is `critical` below one day,
+`low` below two days, and `sufficient` at two or more days. `supply_needs(zone)`
+reports disjoint people in need, horizon quantities, route modes, and per
+vehicle payload; missing capacities are never invented.
+
+Food and water are optional. `supply_need` derives the people count from
+`demand_by_zone`'s mutually exclusive critical, stranded non-critical, and
+supply-dependent groups, then multiplies by daily rate and horizon. One
+`food_packs` is one person-day; water is measured in litres. Logistics gathers
+`supply_needs` only when a supply horizon is configured and claims food/water
+plus delivery vehicles. Aliases (`food`, `food_rations`, `water`,
+`drinking_water`) canonicalize to `food_packs` and `water_liters` during claim
+clamping, oversubscription checks, and event resource losses.
+
+Allocation assigns vehicles first using the existing priority-tier order. It
+then caps zone supply by horizon need, remaining stock, and delivery capacity
+(`vehicle units × payload × floor(window / trip time)`). Ground trucks require
+a feasible road and use `truck_trip_hours_by_zone`, falling back to
+`trip_hours_by_zone`; boats require known zone trip hours. Cut-off zones are
+considered first, followed by larger uncovered needs. A vehicle assigned to
+another team's evacuation work is not reused for Logistics supply in the same
+window. `Plan.supply_coverage` reports need, delivery, percent covered,
+days-of-cover, and delivery limits by zone. `undeliverable_stock` is stock left
+because remaining delivery capacity cannot carry it; it is separate from
+demand shortfalls. `unresolved_shortfalls` also records horizon demand above
+on-hand food/water inventory, without counting stock blocked only by delivery
+limits as an inventory shortfall. Stock with no deliverable route appears in
+risks. Legacy
+scenarios without supply fields omit supply coverage and supply risks.
+
+Bundled water rates, horizon, and vehicle payloads are assumed demo values;
+see [ASSUMPTIONS.md](ASSUMPTIONS.md). Verify Sphere Handbook water guidance
+before citing it.
 `tools.failure` can inject targeted, wildcard, random, or timeout failures.
 Agents record unavailable telemetry, set claim uncertainty, and retain a
 baseline fallback estimate.
@@ -78,7 +113,9 @@ use the remaining unclassified population for that group, which is an explicit
 model assumption rather than verified field data.
 
 The scenario's `operations` schema carries optional boat capacity, round-trip
-hours by zone, ambulance capacity, and hospital facility objects. Missing
+hours by zone, ambulance capacity, hospital facility objects, daily food and
+water rates, a horizon, vehicle payloads, and optional truck-specific trip
+times. Missing
 capacity and facility values remain `None` and are treated as unverified.
 Legacy `hospitals: ["name"]` inputs remain valid and normalize into facility
 objects with unknown capacity and transfer status. `boats_needed` uses whole
@@ -254,7 +291,7 @@ stateDiagram-v2
 |---|---|---|---|
 | Medical | Critical patients, triage urgency, hospital capacity, medical transport | `hospital_capacity`, `receiving_capacity`, `transport_options`, `casualty_estimate` | `Claim`; peer `Estimate` |
 | Shelter | Stranded residents, shelter capacity, evacuation and phased rescue | `shelter_capacity`, `zone_population` | `Claim`; peer `Estimate` |
-| Logistics | Supplies, vehicles, route access, transport feasibility | `road_status`, `vehicle_inventory`, `stock_levels` | `Claim`; peer `Estimate` |
+| Logistics | Supplies, vehicles, route access, transport feasibility | `road_status`, `vehicle_inventory`, `stock_levels`, `supply_needs` (when configured) | `Claim`; peer `Estimate` |
 | Mediator | Challenge claims, request fallback/peer evidence, resolve conflict and allocate inventory | Deterministic scoring and inventory | `MediatorAction`, `Counter`, `Plan` |
 | Scenario | Validate event text, patch scenario facts, diff before/after, derive affected agents | LLM-validated `ScenarioPatch`, `ScenarioDiff` | Updated `NegotiationState` |
 
@@ -276,13 +313,21 @@ verified incident allocation. See `docs/ASSUMPTIONS.md` for every demo value.
       {"name": "Zone A", "population": 500, "stranded": 300, "critical_patients": 0, "road_access": 0.5, "supply_dependent": 150},
       {"name": "Zone B", "population": 120, "stranded": 12, "critical_patients": 12, "road_access": 0.3, "supply_dependent": 50}
     ],
-    "resources": {"boats": 3},
+    "resources": {"boats": 3, "food_packs": 717, "water_liters": 6144},
     "hospitals": ["Regional Hospital"],
     "roads": {"Zone A": "blocked", "Zone B": "flooded"},
     "operations": {
       "boat_capacity_persons": 50,
       "trip_hours_by_zone": {"Zone A": 2.0, "Zone B": 2.0},
       "ambulance_capacity": 2,
+      "food_packs_per_person_day": 1,
+      "water_liters_per_person_day": 10,
+      "supply_horizon_days": 2,
+      "truck_payload_packs": 1000,
+      "truck_payload_liters": 10000,
+      "boat_payload_packs": 200,
+      "boat_payload_liters": 2000,
+      "truck_trip_hours_by_zone": {"Zone A": 2.0, "Zone B": 2.0},
       "hospitals": [{"name": "Regional Hospital"}]
     }
   },
@@ -344,7 +389,8 @@ and [supported Python versions](https://docs.streamlit.io/knowledge-base/using-s
 `scripts/check_trace.py` reads the JSONL, output `Plan`, and matching
 `Scenario`. It checks agent participation, challenge/revision, event
 reassessment, recovery after tool failure, scenario-supported hospital facts,
-inventory totals, numeric justifications, and shortfall resource names. It
+inventory totals, supply delivery caps, stock/supply tool facts, payload and
+per-person claims, numeric justifications, and shortfall resource names. It
 prints PASS/FAIL for each invariant and exits nonzero on failure. It does not
 repair or rewrite either artifact.
 
@@ -357,8 +403,9 @@ before/after allocation comparisons. The Streamlit page gives coordinators a
 scenario summary and advanced editor in the sidebar, a welcome state with a
 read-only sample option, and four views: Plan, Negotiation, What-if events, and
 Raw trace. Run progress and missing-key errors use short, actionable messages.
-Plan cards report allocations, coverage, risks, remaining shortfalls, and
-unknown assumptions. Older plans without zone coverage or other optional fields
+Plan cards report allocations, food/water inventory and days-of-cover when
+configured, coverage, delivery limits, undeliverable stock, risks, remaining
+shortfalls, and unknown assumptions. Older plans without zone coverage or other optional fields
 render with clear empty states. The Negotiation tab groups plain-language event
 summaries by round, supports agent filtering, and hides routine tool calls by
 default. The What-if tab builds zone-specific physical events, keeps custom

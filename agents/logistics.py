@@ -6,6 +6,7 @@ from typing import Any
 from agents._common import gather_tool_telemetry, handle_tool_failure
 from lib.schemas import Claim, Counter, Estimate, NegotiationState
 from lib.tracing import Tracer
+from lib.feasibility import canonical_resource
 
 _PROMPT_PATH = Path(__file__).parent / "prompts" / "logistics.md"
 _SYSTEM_PROMPT: str | None = None
@@ -23,9 +24,10 @@ def _gather_tool_data(
     state: NegotiationState, tracer: Tracer
 ) -> tuple[dict[str, Any], bool, list[str]]:
     """Call road_status, vehicle_inventory, and stock_levels via shared telemetry gatherer."""
-    return gather_tool_telemetry(
-        state.scenario, ["road_status", "vehicle_inventory", "stock_levels"], tracer
-    )
+    tools = ["road_status", "vehicle_inventory", "stock_levels"]
+    if state.scenario.operations.supply_horizon_days is not None:
+        tools.append("supply_needs")
+    return gather_tool_telemetry(state.scenario, tools, tracer)
 
 
 def _get_blocked_routes(state: NegotiationState, tool_data: dict[str, Any]) -> list[str]:
@@ -92,6 +94,11 @@ def _build_user_message(
         parts.append(f"Stock levels (food, water, rations): {tool_data['stock_levels']}")
     if "stock_levels_error" in tool_data:
         parts.append(f"WARNING – stock_levels tool failed: {tool_data['stock_levels_error']}")
+
+    if "supply_needs" in tool_data:
+        parts.append(f"Supply needs and per-vehicle delivery capacity: {tool_data['supply_needs']}")
+        parts.append("Use only reported stock and payload values. Do not invent payloads or per-person rates. "
+                     "Food and water requests must not exceed the zone need or available stock.")
 
     if tool_failed:
         parts.append(
@@ -184,6 +191,13 @@ def make_claim(
     # Enforce agent identity
     if claim.agent != "logistics":
         claim = claim.model_copy(update={"agent": "logistics"})
+
+    canonical = {}
+    for name, amount in claim.resources.items():
+        key = canonical_resource(name)
+        canonical[key] = canonical.get(key, 0) + amount
+    if canonical != claim.resources:
+        claim = claim.model_copy(update={"resources": canonical})
 
     # Handle tool failure: state uncertainty explicitly and offer fallback_estimate
     claim = handle_tool_failure(claim, "logistics", state.scenario, tool_failed, failed_tools)

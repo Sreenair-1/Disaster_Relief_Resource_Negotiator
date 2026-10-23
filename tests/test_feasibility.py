@@ -1,5 +1,8 @@
 from lib.feasibility import (
     boats_needed,
+    canonical_resource,
+    delivery_capacity,
+    days_of_cover,
     demand_by_zone,
     demand_totals,
     route_feasible,
@@ -7,6 +10,7 @@ from lib.feasibility import (
     validate_claim_demand,
     validate_claim_facts,
     clamp_claim_resources,
+    supply_need,
 )
 from lib.schemas import Claim, Operations, Scenario, Zone
 
@@ -81,5 +85,45 @@ def test_resource_requests_are_clamped_and_non_inventory_names_dropped():
                   justification="need", fallback_option="phase")
     clean, missing, changes = clamp_claim_resources(claim, scenario)
     assert clean.resources == {"boats": 2}
-    assert missing == [{"resource": "food_rations", "requested": 20}]
+    assert missing == [{"resource": "food_packs", "requested": 20}]
     assert changes == {"boats": {"requested": 5, "allowed": 2}}
+
+
+def test_supply_need_uses_disjoint_population_and_canonical_aliases():
+    zone = Zone(name="A", population=100, stranded=40, critical_patients=10,
+                supply_dependent=60)
+    operations = Operations(food_packs_per_person_day=1, water_liters_per_person_day=10,
+                            supply_horizon_days=2)
+    assert supply_need(zone, operations) == {
+        "people_in_need": 100, "food_packs": 200, "water_liters": 2000,
+    }
+    assert canonical_resource("food_rations") == "food_packs"
+    assert canonical_resource("drinking_water") == "water_liters"
+    assert days_of_cover(None, 100, 10) is None
+    assert days_of_cover(500, 100, 10) == 0.5
+
+
+def test_alias_claims_are_clamped_to_need_and_stock():
+    scenario = Scenario(
+        disaster_type="flood", zones=[Zone(name="A", population=10)],
+        resources={"food_packs": 15},
+        operations=Operations(food_packs_per_person_day=1, supply_horizon_days=1),
+    )
+    claim = Claim(agent="logistics", resources={"food": 30}, people_affected=10,
+                  urgency=5, time_window_hrs=1, justification="need", fallback_option="phase")
+    clean, missing, changes = clamp_claim_resources(claim, scenario)
+    assert clean.resources == {"food_packs": 10}
+    assert not missing
+    assert changes == {"food_packs": {"requested": 30, "allowed": 10}}
+
+
+def test_supply_payload_and_rate_facts_are_corrected_and_flagged(sample_scenario):
+    claim = Claim(agent="logistics", resources={}, people_affected=10, urgency=5,
+                  time_window_hrs=1,
+                  justification="Truck payload is 900 packs and 4 food packs per person per day.",
+                  fallback_option="phase")
+    corrected, notes = validate_claim_facts(claim, sample_scenario)
+    assert corrected.contradicts_data is True
+    assert notes
+    assert "1000 truck food payload" in corrected.justification
+    assert "1 food packs per person-day" in corrected.justification

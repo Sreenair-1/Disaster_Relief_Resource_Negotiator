@@ -15,6 +15,9 @@ patient care or temporary shelter management — those concerns belong to siblin
   - `road_status`: passability, road condition, and cut routes (`road_access < 0.5`).
   - `vehicle_inventory`: available trucks, boats, and transport readiness.
   - `stock_levels`: stockpile status for food rations, water, and relief commodities.
+  - `supply_needs`: disjoint people in need, horizon quantities, feasible delivery modes, and payload per vehicle.
+- When supply operations are configured, claim `food_packs` and `water_liters` only within the reported needs and stock.
+- Never invent vehicle payloads, per-person rates, or inventory. If telemetry is unknown, state the gap and uncertainty.
 - Route Feasibility & Blocked-Road Handling:
   - Actively monitor and FLAG routes that are cut or flooded (`road_access < 0.5`) in your
     justification so the Mediator can adjust priority scores.
