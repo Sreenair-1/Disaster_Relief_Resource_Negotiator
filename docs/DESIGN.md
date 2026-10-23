@@ -359,4 +359,10 @@ read-only sample option, and four views: Plan, Negotiation, What-if events, and
 Raw trace. Run progress and missing-key errors use short, actionable messages.
 Plan cards report allocations, coverage, risks, remaining shortfalls, and
 unknown assumptions. Older plans without zone coverage or other optional fields
-render with clear empty states.
+render with clear empty states. The Negotiation tab groups plain-language event
+summaries by round, supports agent filtering, and hides routine tool calls by
+default. The What-if tab builds zone-specific physical events, keeps custom
+text separate, exposes the tool-failure toggle, and displays applied/rejected
+event history with affected teams and allocation changes. Recorded sample
+runs are clearly labelled and keep event controls disabled. Raw trace is
+paginated with individual JSON details collapsed.

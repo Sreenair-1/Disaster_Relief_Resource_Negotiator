@@ -8,6 +8,7 @@ from typing import Any
 import streamlit as st
 from dotenv import load_dotenv
 
+from agents.scenario import PRESET_EVENTS
 from lib.schemas import Scenario
 from ui.format import agent_style, describe_event, replan_diff, summarize_plan
 from ui.runner import inject_event, run_negotiation
@@ -65,6 +66,8 @@ def handle_inject_event() -> None:
         st.session_state.trace_events = result.get("events", [])
         st.session_state.run_result = result
         st.session_state.event_text = ""
+        if "custom_event_text" in st.session_state:
+            st.session_state.custom_event_text = ""
         st.session_state.event_error = ""
     except Exception as exc:
         st.session_state.event_error = _friendly_error(str(exc))
@@ -300,21 +303,155 @@ def _render_plan_tab(plan: dict[str, Any], before_plan: dict[str, Any] | None) -
 
 
 def _render_negotiation_tab(events: list[dict[str, Any]]) -> None:
-    decisions = sum(1 for event in events if event.get("type") == "decision" and
-                    (event.get("payload") or {}).get("counter"))
+    from ui.format import group_by_round
+
+    rounds = group_by_round(events)
+    challenges = sum(1 for event in events if event.get("type") == "decision" and
+                     (event.get("payload") or {}).get("action") == "challenge_agent")
     revisions = sum(1 for event in events if event.get("type") == "claim_revision")
     failures = sum(1 for event in events if event.get("type") == "tool_result" and
                    (event.get("payload") or {}).get("ok") is False)
-    st.caption(f"{decisions} challenge or estimate requests · {revisions} revisions · {failures} tool failures")
+    result = st.session_state.get("run_result") or {}
+    rounds_count = (result.get("plan") or {}).get("rounds_used") or max(rounds, default=0)
+    st.caption(f"{rounds_count} rounds · {challenges} challenges · {revisions} revisions · {failures} tool failures")
     if not events:
         st.info("Run the scenario to see how the teams and Mediator reached a plan.")
         return
-    for event in events:
-        summary = describe_event(event)
-        with st.container(border=True):
+
+    agent_names = sorted({describe_event(event)["agent"] for event in events})
+    selected_agents = st.multiselect("Show teams", agent_names, default=agent_names,
+                                    help="Choose which teams and coordinators to show.")
+    show_tools = st.toggle("Show tool calls", value=False,
+                           help="Show each data lookup. Failures and recovery estimates are counted above.")
+    with st.expander("Agent legend"):
+        st.write(" · ".join(f"{agent_style(name)['icon']} {name}" for name in agent_names))
+
+    hidden_tool_kinds = {"tool_requested", "tool_result"}
+    for round_number, round_events in rounds.items():
+        visible = []
+        for event in round_events:
+            summary = describe_event(event)
+            if summary["agent"] not in selected_agents:
+                continue
+            if not show_tools and event.get("type") in hidden_tool_kinds:
+                continue
+            visible.append((event, summary))
+        if not visible:
+            continue
+        st.subheader(f"Round {round_number}" if round_number else "Before the first round")
+        for index, (event, summary) in enumerate(visible, start=1):
             st.markdown(f"{summary['icon']} **{summary['agent']}** — {summary['headline']}")
             if summary["detail"]:
                 st.caption(summary["detail"])
+            with st.expander(f"View event details ({event.get('type', 'event')})"):
+                st.json(event)
+
+
+def _number_word(number: int) -> str:
+    words = {1: "One", 2: "Two", 3: "Three", 4: "Four", 5: "Five",
+             6: "Six", 7: "Seven", 8: "Eight", 9: "Nine", 10: "Ten"}
+    return words.get(number, str(number))
+
+
+def _compose_event(kind: str, zone: str, magnitude: int, custom_text: str,
+                   scenario: Scenario | None) -> str:
+    if kind == "Custom":
+        return custom_text.strip()
+    if kind == "Road or bridge collapse":
+        if zone == "Zone A":
+            return PRESET_EVENTS["bridge_collapse"]
+        return f"Bridge to {zone} collapses, cutting all ground road access to {zone}."
+    if kind == "New critical patients":
+        if zone == "Zone B" and magnitude == 8:
+            return PRESET_EVENTS["new_casualties"]
+        return f"{_number_word(magnitude)} new critical patients arrive in {zone}."
+    if kind == "Rising water":
+        if zone == "Zone A" and magnitude == 100:
+            return PRESET_EVENTS["water_rising_fast"]
+        return f"Flood water rises in {zone}, increasing stranded residents by {magnitude}%."
+    if kind == "Hospital full":
+        hospitals = scenario.operations.hospitals if scenario else []
+        name = hospitals[0].name if hospitals else (
+            scenario.hospitals[0] if scenario and scenario.hospitals else "The receiving hospital"
+        )
+        if name == "Regional Hospital":
+            return PRESET_EVENTS["hospital_capacity"]
+        return f"{name} reaches full capacity; ICU beds exhausted."
+    return ""
+
+
+def _render_event_warnings(events: list[dict[str, Any]]) -> None:
+    for event in events:
+        payload = event.get("payload") or {}
+        if event.get("type") == "event_rejected" and isinstance(payload, dict) and payload.get("warning"):
+            st.warning(f"Event had no effect: {payload.get('reason', 'no changes were made')}")
+
+
+def _render_event_tab(scenario: Scenario | None, result: dict[str, Any], events: list[dict[str, Any]]) -> None:
+    live = bool(result.get("state") is not None and not st.session_state.get("display_only"))
+    if not live:
+        st.info("Run a live scenario first to enable event injection. Recorded samples are read-only.")
+
+    try:
+        from tools.failure import set_failure
+
+        failure_enabled = st.toggle("Simulate tool failure", key="failure_enabled", disabled=not live,
+                                    help="Makes data tools fail so you can see agents recover.")
+        set_failure("*" if failure_enabled else None)
+    except ImportError:
+        st.info("Tool failure simulation is not available in this installation.")
+
+    st.subheader("Build a what-if event")
+    kinds = ["Road or bridge collapse", "New critical patients", "Rising water", "Hospital full", "Custom"]
+    kind = st.selectbox("Event type", kinds, key="event_kind", disabled=not live,
+                        help="Choose a clear change to test against this scenario.")
+    zones = [zone.name for zone in scenario.zones] if scenario and scenario.zones else ["No zone available"]
+    zone = st.selectbox("Affected zone", zones, key="event_zone", disabled=not live or kind == "Hospital full",
+                        help="Choose the zone affected by the event.")
+    magnitude = 8
+    if kind == "New critical patients":
+        magnitude = st.number_input("New critical patients", min_value=1, max_value=10000, value=8,
+                                    step=1, disabled=not live, help="Number of additional critical patients.")
+    elif kind == "Rising water":
+        magnitude = st.number_input("Increase in stranded residents (%)", min_value=10, max_value=500,
+                                    value=100, step=10, disabled=not live,
+                                    help="How much the event increases stranded residents.")
+    custom_text = ""
+    if kind == "Custom":
+        with st.expander("Write a custom event"):
+            custom_text = st.text_area("Custom event text", key="custom_event_text", disabled=not live,
+                                       help="Describe one concrete change and name its zone.")
+    composed = _compose_event(kind, zone, int(magnitude), custom_text, scenario)
+    st.session_state.event_text = composed
+    st.text_area("Event text to apply", value=composed, disabled=True, height=80,
+                 help="This is the unambiguous text that will be sent to the scenario agent.")
+    st.button("Inject event", type="primary", icon=":material/send:",
+              disabled=not live or not composed.strip(), on_click=handle_inject_event,
+              help="Apply the event, refresh affected claims, and compare the plan.")
+
+    if st.session_state.get("event_error"):
+        st.warning(st.session_state.event_error)
+
+    st.subheader("Event history")
+    history = [event for event in events if event.get("type") in {"event_applied", "event", "event_rejected"}]
+    if not history:
+        st.caption("No events have been applied during this run.")
+    for event in history:
+        description = describe_event(event)
+        with st.container(border=True):
+            st.markdown(f"{description['icon']} **{description['headline']}**")
+            if description["detail"]:
+                st.caption(description["detail"])
+    if history and live:
+        affected = (result.get("state").affected_agents if result.get("state") else [])
+        st.write("Teams asked to review their claims: " + (", ".join(agent_style(a)["name"] for a in affected) or "none reported"))
+        before_plan = result.get("before_plan")
+        after_plan = result.get("plan") or {}
+        if before_plan:
+            diff = replan_diff(before_plan, after_plan)
+            st.write(diff["headline"])
+            for row in diff["rows"]:
+                st.caption(f"{row['arrow']} {row['agent']} · {row['resource']}: {row['before']} → {row['after']} — {row['reason']}")
 
 
 def _render_raw_trace(events: list[dict[str, Any]]) -> None:
@@ -355,6 +492,7 @@ def main() -> None:
     _render_error_and_warnings(result)
     if st.session_state.get("display_only"):
         st.caption("Recorded sample, not live · read-only")
+    _render_event_warnings(st.session_state.get("trace_events", []))
 
     plan_tab, negotiation_tab, events_tab, trace_tab = st.tabs(
         ["Plan", "Negotiation", "What-if events", "Raw trace"]
@@ -370,10 +508,7 @@ def main() -> None:
     with negotiation_tab:
         _render_negotiation_tab(st.session_state.get("trace_events", []))
     with events_tab:
-        if not result or result.get("state") is None or st.session_state.get("display_only"):
-            st.info("Run a live scenario first to enable event injection. Recorded samples are read-only.")
-        else:
-            st.info("Event controls are available after a live run.")
+        _render_event_tab(scenario, result, st.session_state.get("trace_events", []))
     with trace_tab:
         _render_raw_trace(st.session_state.get("trace_events", []))
 

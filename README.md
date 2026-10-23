@@ -125,6 +125,9 @@ and keeps upload and JSON editing under **Advanced: edit scenario JSON**. The
 main view separates the plan, negotiation timeline, what-if events, and raw
 trace into tabs. Plan summaries tolerate older files that omit optional
 fields, and show team allocations, zone coverage, risks, and replan changes.
-The Negotiation tab uses plain-language event descriptions; Raw trace keeps the
-original JSON for review. When no API key is available, the app shows where to
-configure one instead of a traceback.
+The Negotiation tab provides a filtered, round-by-round timeline and can hide
+routine tool lookups; Raw trace keeps the original JSON for review. What-if
+events use a guided builder for road closures, new patients, rising water,
+hospital capacity, or a custom event. Tool failure simulation is available for
+a live run. When no API key is available, the app shows where to configure one
+instead of a traceback.
