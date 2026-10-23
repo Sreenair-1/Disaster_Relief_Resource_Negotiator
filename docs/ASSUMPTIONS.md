@@ -99,3 +99,9 @@ explicitly assumed for a software demo, not verified local data:
   requests. Remaining deficits belong in `unresolved_shortfalls`.
 - The mediator's configured three-round cap is a workflow safety setting; its
   number is recorded under follow-up commit 2 above.
+
+## Follow-up commit 6: trace self-check
+
+- `scripts/check_trace.py` validates artifact structure and policy invariants;
+  it does not certify that a live run occurred or replace review of the
+  downloaded trace and plan.

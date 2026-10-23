@@ -73,23 +73,16 @@ challenge and log each affected agent's before/after reassessment reason.
 
 ## Demo script
 
-1. Load the seed `data/scenario.json` (with Zone A and Zone B) and select
-   **Run**. Review the first allocation and the three specialist claims.
-2. Enter the preset event
-   `Bridge to Zone A collapses, cutting all ground road access to Zone A.` and
-   select **Inject event**. Review the new scenario facts, affected-agent
-   refresh, and first-run versus replan allocation comparison.
-3. Enter the hospital preset exactly as listed in `agents.scenario.PRESET_EVENTS`:
-   `Regional Hospital reaches full capacity; ICU beds exhausted.` Select
-   **Inject event** and confirm the hospital diff marks Medical as affected.
-4. Enable **Simulate tool failure** in the sidebar, then enter the preset event
-   `Eight new critical patients arrive in Zone B.` and select **Inject event**.
-   The transcript records failed tool calls; agents continue with uncertainty and
-   fallback estimates, and a warning panel shows unavailable tool data.
-5. Disable **Simulate tool failure**. Download **Download trace** as
+1. Load `data/scenarios/wayanad_monsoon_flood.json` and select **Run**. Review
+   the first allocation and the three specialist claims.
+2. Inject the preset event `Bridge to Meppadi Valley collapses, cutting all
+   ground road access to Meppadi Valley.` Review the replan allocation.
+3. Enable **Simulate tool failure** and inject `Eight new critical patients
+   arrive in Mananthavady Riverine.` Confirm the tool failure and estimate
+   feedback appear in the transcript.
+4. Disable **Simulate tool failure**. Download **Download trace** as
    `trace_full_run.jsonl` and **Download final plan** as
-   `output_full_run.json`, saving both into `samples/`. The preset event texts come from
-   `agents.scenario.PRESET_EVENTS` (`bridge_collapse` and `new_casualties`).
+   `output_full_run.json`, saving both into `samples/`.
 
 ## Test
 
@@ -107,3 +100,19 @@ the app's Secrets settings, and set `OPENAI_BASE_URL` and `OPENAI_MODEL` there
 when using Groq. Never add credentials to the repository. See the official
 [deployment guide](https://docs.streamlit.io/deploy/streamlit-community-cloud/deploy-your-app)
 and [Python version guide](https://docs.streamlit.io/deploy/streamlit-community-cloud/manage-your-app/upgrade-python).
+
+## Trace self-check and Wayanad regeneration
+
+After downloading a run, validate it against the matching scenario:
+
+```powershell
+python scripts/check_trace.py samples/trace_full_run.jsonl samples/output_full_run.json --scenario data/scenarios/wayanad_monsoon_flood.json
+```
+
+To regenerate the full Wayanad artifacts, load the Wayanad scenario and click
+**Run**. Inject `Bridge to Meppadi Valley collapses, cutting all ground road
+access to Meppadi Valley.`. Enable **Simulate tool failure**, inject
+`Eight new critical patients arrive in Mananthavady Riverine.`, then disable
+failure. Download the JSONL as `samples/trace_full_run.jsonl` and the final
+plan as `samples/output_full_run.json`. Run the checker command above; it
+prints each check and exits nonzero if any invariant fails.

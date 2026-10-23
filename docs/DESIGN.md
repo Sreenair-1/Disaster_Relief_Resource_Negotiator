@@ -338,3 +338,12 @@ Python 3.14 as supported by Community Cloud and allows version selection in
 Advanced settings; Cloud's deployment guide currently says its default is
 Python 3.12. Select 3.14 for this app. See [Cloud deployment](https://docs.streamlit.io/deploy/streamlit-community-cloud/deploy-your-app)
 and [supported Python versions](https://docs.streamlit.io/knowledge-base/using-streamlit/sanity-checks).
+
+## Trace self-check
+
+`scripts/check_trace.py` reads the JSONL, output `Plan`, and matching
+`Scenario`. It checks agent participation, challenge/revision, event
+reassessment, recovery after tool failure, scenario-supported hospital facts,
+inventory totals, numeric justifications, and shortfall resource names. It
+prints PASS/FAIL for each invariant and exits nonzero on failure. It does not
+repair or rewrite either artifact.
