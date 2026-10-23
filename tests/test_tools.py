@@ -12,7 +12,7 @@ from tools.failure import (
     set_random_mode,
     set_timeout_mode,
 )
-from tools.hospital import hospital_capacity
+from tools.hospital import GROUND_ACCESS_THRESHOLD, hospital_capacity, receiving_capacity, transport_options
 from tools.inventory import stock_levels, vehicle_inventory
 from tools.population import zone_population
 from tools.registry import TOOLS
@@ -47,16 +47,28 @@ def test_hospital_capacity_summary(sample_scenario):
     data = hospital_capacity(sample_scenario)
     assert isinstance(data, dict)
     assert "hospitals" in data
-    assert data["count"] == len(sample_scenario.hospitals)
-    assert data["total_available_beds"] >= 0
+    assert data["hospitals"] == [item.model_dump() for item in sample_scenario.operations.hospitals]
+    assert data["verified"] is False
+    assert data["hospitals"][0]["icu_beds_free"] is None
 
 
 def test_hospital_capacity_specific(sample_scenario):
     data = hospital_capacity(sample_scenario, hospital="Regional Hospital")
-    assert data["hospital"] == "Regional Hospital"
-    assert "available_beds" in data
-    assert "icu_available" in data
-    assert data["status"] in ("operational", "near_capacity")
+    assert data["hospitals"] == [sample_scenario.operations.hospitals[0].model_dump()]
+    assert data["verified"] is False
+    assert data == receiving_capacity(sample_scenario, hospital="Regional Hospital")
+
+
+def test_transport_options_reflects_blocked_roads_and_unknown_capacity(sample_scenario):
+    sample_scenario.zones[0].road_access = GROUND_ACCESS_THRESHOLD - 0.01
+    sample_scenario.roads["Zone B"] = "landslide"
+    sample_scenario.operations.boat_capacity_persons = None
+    data = transport_options(sample_scenario)
+    options = {item["zone"]: item for item in data["options"]}
+    assert options["Zone A"]["ground_feasible"] is False
+    assert options["Zone B"]["ground_feasible"] is False
+    assert options["Zone A"]["boat_capacity_persons"] is None
+    assert options["Zone A"]["verified"] is False
 
 
 def test_hospital_capacity_unknown_raises(sample_scenario):

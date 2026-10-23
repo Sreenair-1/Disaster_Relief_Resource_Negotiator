@@ -92,6 +92,12 @@ or transfer-acceptance data marks support unverified; known ICU shortfall with
 no accepting facility raises a plan risk. Fallbacks naming blocked ground
 access or unavailable boats are rejected and traced.
 
+`hospital_capacity` and `receiving_capacity` return facility objects directly
+from `Scenario.operations.hospitals`; unknown fields stay `null`. Transport
+options mark ground access infeasible below the configured `0.5` demo threshold
+or when the named road is blocked or landslide-damaged. `verified` is true only
+when every returned capacity and route field relied on by planning is known.
+
 ## Orchestration and replanning
 
 `graph.negotiation.run_negotiation(scenario, llm, tracer)` collects claims from

@@ -31,3 +31,12 @@ verified operational data and must not be presented as field measurements.
   people, urgency 9, a twelve-hour window, 2 boats, 312 food rations, and 3120
   liters of water. These are demo claim inputs, not verified field data; the
   generated plan is not operational or field-verified.
+
+## Follow-up commit 1: transport verification
+
+- Ground routes are considered feasible only at `road_access >= 0.5`, unless
+  the road condition is explicitly `blocked` or `landslide`. This is a demo
+  routing threshold, not a road-engineering standard; road status and access
+  are sourced from the scenario.
+- Hospital and transport tools never fill unknown fields with assumed numeric
+  values. `verified` is false when any field needed by a plan is unknown.

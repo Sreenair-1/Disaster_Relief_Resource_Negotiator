@@ -4,6 +4,8 @@ from lib.schemas import Scenario
 from tools.common import get_tool_error, normalize_scenario
 from tools.failure import check_failure
 
+GROUND_ACCESS_THRESHOLD = 0.5
+
 
 def hospital_capacity(
     scenario: Scenario | dict[str, Any],
@@ -24,61 +26,22 @@ def hospital_capacity(
     sc = normalize_scenario(scenario)
     target = hospital or kw.get("hospital_name") or kw.get("name")
 
-    total_critical = sum(z.critical_patients for z in sc.zones)
-
     if target:
-        matched = next(
-            (h for h in sc.hospitals if h.strip().lower() == target.strip().lower()), None
-        )
+        matched = next((h.name for h in sc.operations.hospitals
+                        if h.name.strip().lower() == target.strip().lower()), None)
         if not matched:
             raise get_tool_error()(
                 f"Hospital '{target}' not found in scenario. Known hospitals: {sc.hospitals}"
             )
-
-        total_beds = 100
-        critical_share = total_critical // max(len(sc.hospitals), 1)
-        occupied_beds = min(total_beds, 70 + critical_share)
-        available_beds = max(0, total_beds - occupied_beds)
-        icu_total = 20
-        icu_occupied = min(icu_total, 10 + critical_share)
-        icu_available = max(0, icu_total - icu_occupied)
-
-        return {
-            "hospital": matched,
-            "total_beds": total_beds,
-            "occupied_beds": occupied_beds,
-            "available_beds": available_beds,
-            "icu_total": icu_total,
-            "icu_occupied": icu_occupied,
-            "icu_available": icu_available,
-            "surge_capacity": 30,
-            "status": "operational" if available_beds > 5 else "near_capacity",
-        }
-
-    hospitals_info = []
-    for h in sc.hospitals:
-        total_beds = 100
-        critical_share = total_critical // max(len(sc.hospitals), 1)
-        occupied_beds = min(total_beds, 70 + critical_share)
-        available_beds = max(0, total_beds - occupied_beds)
-        icu_total = 20
-        icu_occupied = min(icu_total, 10 + critical_share)
-        icu_available = max(0, icu_total - icu_occupied)
-        hospitals_info.append(
-            {
-                "hospital": h,
-                "total_beds": total_beds,
-                "available_beds": available_beds,
-                "icu_available": icu_available,
-                "status": "operational" if available_beds > 5 else "near_capacity",
-            }
-        )
-
+        facilities = [h for h in sc.operations.hospitals if h.name == matched]
+    else:
+        facilities = sc.operations.hospitals
     return {
-        "hospitals": hospitals_info,
-        "count": len(hospitals_info),
-        "total_available_beds": sum(h["available_beds"] for h in hospitals_info),
-        "total_icu_available": sum(h["icu_available"] for h in hospitals_info),
+        "hospitals": [h.model_dump() for h in facilities],
+        "verified": bool(facilities) and all(
+            h.icu_beds_free is not None and h.accepts_transfers is not None
+            and h.travel_hours is not None for h in facilities
+        ),
     }
 
 
@@ -94,6 +57,7 @@ def receiving_capacity(scenario: Scenario | dict[str, Any], hospital: str | None
     return {"hospitals": [h.model_dump() for h in facilities],
             "verified": bool(facilities) and all(
                 h.icu_beds_free is not None and h.accepts_transfers is not None
+                and h.travel_hours is not None
                 for h in facilities)}
 
 
@@ -103,13 +67,18 @@ def transport_options(scenario: Scenario | dict[str, Any], zone: str | None = No
     sc = normalize_scenario(scenario)
     target = zone or kw.get("zone_name")
     zones = [z for z in sc.zones if target is None or z.name.casefold() == target.casefold()]
-    return {"options": [{
+    options = [{
         "zone": z.name,
-        "ground_feasible": z.road_access > 0,
+        "ground_feasible": z.road_access >= GROUND_ACCESS_THRESHOLD
+        and sc.roads.get(z.name, "").casefold() not in {"blocked", "landslide"},
         "ground_access": z.road_access,
         "boats_available": sc.resources.get("boats", 0),
         "boat_capacity_persons": sc.operations.boat_capacity_persons,
         "round_trip_hours": sc.operations.trip_hours_by_zone.get(z.name),
         "ambulance_capacity": sc.operations.ambulance_capacity,
-        "verified": z.road_access is not None,
-    } for z in zones]}
+    } for z in zones]
+    required = ("ground_access", "boats_available", "boat_capacity_persons",
+                "round_trip_hours", "ambulance_capacity")
+    for option in options:
+        option["verified"] = all(option[field] is not None for field in required)
+    return {"options": options}

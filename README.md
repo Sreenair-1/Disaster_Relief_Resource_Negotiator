@@ -52,6 +52,8 @@ feasibility caps, and splits stock proportionally only within tied priority
 tiers. Severity weights are documented model assumptions.
 Medical support is marked unverified when ICU or receiving-facility data is
 unknown; infeasible road or unavailable-boat fallback options are rejected.
+Capacity tools report only scenario-provided values; unknown capacity remains
+null and route verification requires the planning inputs to be known.
 The final plan includes a feasibility report, and its explanations are checked
 against the numeric scores, ranks, requests, and awards before display.
 Preset events apply concrete scenario diffs, including hospital ICU and
