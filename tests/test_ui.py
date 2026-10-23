@@ -1,4 +1,4 @@
-from pathlib import Path
+﻿from pathlib import Path
 
 from streamlit.testing.v1 import AppTest
 
@@ -13,11 +13,11 @@ def test_app_renders_scenario_controls_and_invalid_json_message(monkeypatch):
 
     assert not app.exception
     assert any(button.label == "Run" for button in app.button)
-    assert any("Scenario is valid" in item.value for item in app.success)
+    assert any("Scenario JSON is valid" in item.value for item in app.success)
 
-    editor = next(area for area in app.text_area if area.label == "Edit scenario JSON")
+    editor = next(area for area in app.text_area if area.label == "Scenario JSON")
     editor.set_value("{").run()
-    assert any("Invalid scenario JSON or fields" in item.value for item in app.error)
+    assert any("Scenario JSON is invalid" in item.value for item in app.error)
 
 
 def test_uploaded_scenario_replaces_editor_contents(monkeypatch):
@@ -28,10 +28,10 @@ def test_uploaded_scenario_replaces_editor_contents(monkeypatch):
 
     app.file_uploader[0].set_value(("uploaded-scenario.json", uploaded, "application/json")).run()
 
-    editor = next(area for area in app.text_area if area.label == "Edit scenario JSON")
+    editor = next(area for area in app.text_area if area.label == "Scenario JSON")
     assert '"Zone A"' in editor.value
     assert '"Zone B"' in editor.value
-    assert any("Scenario is valid" in item.value for item in app.success)
+    assert any("Scenario JSON is valid" in item.value for item in app.success)
 
 
 def test_runner_smoke_with_stub_llm(monkeypatch, sample_scenario):

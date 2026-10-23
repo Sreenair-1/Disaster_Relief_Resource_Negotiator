@@ -353,4 +353,10 @@ repair or rewrite either artifact.
 Pure helpers in `ui/format.py` convert trace events into readable summaries,
 group events by negotiation round, and summarize plans without relying on newer
 optional plan fields. The same helpers produce explicit arrows and reasons for
-before/after allocation comparisons.
+before/after allocation comparisons. The Streamlit page gives coordinators a
+scenario summary and advanced editor in the sidebar, a welcome state with a
+read-only sample option, and four views: Plan, Negotiation, What-if events, and
+Raw trace. Run progress and missing-key errors use short, actionable messages.
+Plan cards report allocations, coverage, risks, remaining shortfalls, and
+unknown assumptions. Older plans without zone coverage or other optional fields
+render with clear empty states.

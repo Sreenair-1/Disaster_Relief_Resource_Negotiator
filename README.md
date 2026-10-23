@@ -119,7 +119,12 @@ prints each check and exits nonzero if any invariant fails.
 
 ### UI presentation
 
-The Streamlit control room turns trace records into short plain-language event
-summaries, with round grouping and named agent icons. Plan summaries tolerate
-older saved plans that omit optional fields and show the allocation outcome,
-critical-patient coverage, and before/after changes after a replan.
+The Streamlit control room opens with a short explanation and offers either a
+live run or a read-only recorded sample. The sidebar summarizes the scenario
+and keeps upload and JSON editing under **Advanced: edit scenario JSON**. The
+main view separates the plan, negotiation timeline, what-if events, and raw
+trace into tabs. Plan summaries tolerate older files that omit optional
+fields, and show team allocations, zone coverage, risks, and replan changes.
+The Negotiation tab uses plain-language event descriptions; Raw trace keeps the
+original JSON for review. When no API key is available, the app shows where to
+configure one instead of a traceback.
