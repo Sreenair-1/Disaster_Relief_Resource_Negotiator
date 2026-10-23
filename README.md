@@ -37,8 +37,11 @@ not verified field data; see [docs/ASSUMPTIONS.md](docs/ASSUMPTIONS.md).
 streamlit run app.py
 ```
 
-Load the seed scenario from `data/scenario.json` or a scenario from
-`data/scenarios/`, edit it if needed, and select **Run**. The control room shows
+In **Advanced: edit scenario JSON**, upload `samples/input.json`; if the upload
+does not populate the editor, paste that file's contents into the **Scenario
+JSON** box. Then select **Run**.
+Use that same file when producing artifacts for the committed trace so the
+trace, input, and output plan refer to the same scenario. The control room shows
 the colored agent transcript,
 tool/counter badges, allocation, conflicts, negotiation rounds, and JSONL trace.
 Inject an event after a successful first run to see the before/after allocation
@@ -50,10 +53,12 @@ the plan is marked `constrained` and reports unresolved resource shortfalls.
 One round means all challenged agents have responded; the round count advances
 once for the complete cycle, not once per challenge, with a hard cap of three.
 Allocation ranks severity-weighted, time-sensitive claims, respects known
-feasibility caps, and splits stock proportionally only within tied priority
-tiers. Severity weights are documented model assumptions.
-Medical support is marked unverified when ICU or receiving-facility data is
-unknown; infeasible road or unavailable-boat fallback options are rejected.
+feasibility caps, and distributes each resource by fixed Medical, Shelter, and
+Logistics tiers. Within a short tier, scores weight the shares. Severity weights
+are documented model assumptions. Medical support is marked unverified when
+ICU or receiving-facility data is unknown; Medical rejects a ground fallback
+when any zone has zero road access and rejects boat fallback when boats are
+unavailable.
 Capacity tools report only scenario-provided values; unknown capacity remains
 null and route verification requires the planning inputs to be known.
 Claims are checked against known capacities and inventory; non-inventory asks
@@ -78,14 +83,14 @@ verify Sphere Handbook water guidance before citing it.
 
 ## Demo script
 
-1. Load `data/scenarios/wayanad_monsoon_flood.json` and select **Run**. Review
-   the first allocation and the three specialist claims.
-2. Inject `Supply depot flooded: 40% of food packs and water lost.` Review the
+1. Load `samples/input.json` in the app and select **Run**. Review the first
+   allocation and the three specialist claims.
+2. Inject `Bridge to Zone A collapses, cutting all ground road access to Zone A.`
+   Review the route replan.
+3. Inject `Supply depot flooded: 40% of food packs and water lost.` Review the
    reduced inventory and supply coverage.
-3. Inject `Bridge to Meppadi Valley collapses, cutting all ground road access
-   to Meppadi Valley.` Review the route replan.
 4. Enable **Simulate tool failure** and inject `Eight new critical patients
-   arrive in Vythiri High Range.` Confirm tool failure and estimate feedback.
+   arrive in Zone B.` Confirm tool failure and estimate feedback.
 5. Disable **Simulate tool failure**. Download **Download trace** as
    `trace_full_run.jsonl` and **Download final plan** as
    `output_full_run.json`, saving both into `samples/`.
@@ -96,32 +101,43 @@ verify Sphere Handbook water guidance before citing it.
 python -m pytest
 ```
 
+Regenerate the model-based input/output definitions with:
+
+```powershell
+python scripts/gen_io_docs.py
+```
+
 ## Deploy on Streamlit Community Cloud
 
-Create an app from this repository with `app.py` as the entrypoint. In
-**Advanced settings**, choose Python 3.14 when it is available in the version
-selector; Cloud currently defaults to Python 3.12 and documents support for
-released versions still receiving security updates. Add `OPENAI_API_KEY` via
+Create an app from this repository with `app.py` as the entrypoint. The
+dependency pins come from the Python 3.14.7 development environment.
+Community Cloud documents Python 3.12 as its default and provides a Python
+version selector. The deployed runtime must match the version tested for this
+application; this README does not designate a deployment version. Add
+`OPENAI_API_KEY` via
 the app's Secrets settings, and set `OPENAI_BASE_URL` and `OPENAI_MODEL` there
 when using Groq. Never add credentials to the repository. See the official
 [deployment guide](https://docs.streamlit.io/deploy/streamlit-community-cloud/deploy-your-app)
 and [Python version guide](https://docs.streamlit.io/deploy/streamlit-community-cloud/manage-your-app/upgrade-python).
 
-## Trace self-check and Wayanad regeneration
+## Trace self-check and sample regeneration
 
 After downloading a run, validate it against the matching scenario:
 
 ```powershell
-python scripts/check_trace.py samples/trace_full_run.jsonl samples/output_full_run.json --scenario data/scenarios/wayanad_monsoon_flood.json
+python scripts/check_trace.py samples/trace_full_run.jsonl samples/output_full_run.json --scenario samples/input.json
 ```
 
-To regenerate the full Wayanad artifacts, load the Wayanad scenario and click
-**Run**. Inject `Bridge to Meppadi Valley collapses, cutting all ground road
-access to Meppadi Valley.`. Enable **Simulate tool failure**, inject
-`Eight new critical patients arrive in Mananthavady Riverine.`, then disable
-failure. Download the JSONL as `samples/trace_full_run.jsonl` and the final
-plan as `samples/output_full_run.json`. Run the checker command above; it
-prints each check and exits nonzero if any invariant fails.
+To regenerate matching artifacts, load `samples/input.json` in the app and
+click **Run**. Inject `Bridge to Zone A collapses, cutting all ground road
+access to Zone A.`, then `Supply depot flooded: 40% of food packs and water
+lost.`. Enable **Simulate tool failure**, inject `Eight new critical patients
+arrive in Zone B.`, then disable failure. Download the JSONL as
+`samples/trace_full_run.jsonl` and the final plan as
+`samples/output_full_run.json`. Run the checker command above; it prints each
+check and exits nonzero if any invariant fails. Then run
+`python scripts/gen_io_docs.py` to refresh the input/output reference; it checks
+that the trace's loaded scenario matches `samples/input.json`.
 
 ### UI presentation
 

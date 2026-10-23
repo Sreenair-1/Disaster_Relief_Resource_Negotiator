@@ -235,44 +235,6 @@ def _claim_order(claim, scenario):
     )
 
 
-def _resource_awards(claims, resource, inventory, scores, order, scenario):
-    """Allocate by score tiers, proportionally splitting only a tied tier."""
-    requests = {claim.agent: min(
-        max(0, claim.resources.get(resource, 0)), unit_cap(claim, scenario, resource)
-    ) for claim in claims}
-    awards = {agent: 0 for agent in requests}
-    budget = max(0, inventory)
-    ordered = [claim for claim in order if requests[claim.agent] > 0]
-    tiers: list[list] = []
-    for claim in ordered:
-        if not tiers or scores[tiers[-1][0].agent] != scores[claim.agent]:
-            tiers.append([claim])
-        else:
-            tiers[-1].append(claim)
-    for tier in tiers:
-        need = sum(requests[c.agent] for c in tier)
-        if need <= budget:
-            for claim in tier:
-                awards[claim.agent] = requests[claim.agent]
-            budget -= need
-            continue
-        if budget <= 0:
-            break
-        # Equal score tier: divide proportionally to capped useful requests.
-        total_weight = sum(requests[c.agent] for c in tier)
-        quotas = {c.agent: budget * requests[c.agent] / total_weight for c in tier}
-        base = {agent: floor(value) for agent, value in quotas.items()}
-        for agent, value in base.items():
-            awards[agent] = value
-        left = budget - sum(base.values())
-        by_tie_break = sorted(tier, key=lambda c: _claim_order(c, scenario))
-        remainder_order = sorted(by_tie_break, key=lambda c: -(quotas[c.agent] - base[c.agent]))
-        for claim in remainder_order[:left]:
-            awards[claim.agent] += 1
-        break
-    return awards
-
-
 def _claim_tier(agent: str) -> int:
     return {"medical": 1, "shelter": 2, "logistics": 3}.get(agent, 3)
 
@@ -756,6 +718,28 @@ def finalize(state: NegotiationState, llm, tracer: Tracer) -> Plan:
         justifications[claim.agent] = f"{valid_note} {detail}".strip()
 
     deficits = over_subscribed(state.claims, state.scenario)
+    demand_report = demand_totals(state.scenario)
+    partition_check = not demand_report["overlaps"]
+    inventory = {canonical_resource(name): amount
+                 for name, amount in state.scenario.resources.items()}
+    allocated_by_resource: dict[str, int] = {}
+    for agent_awards in allocation.values():
+        for name, amount in agent_awards.items():
+            resource = canonical_resource(name)
+            allocated_by_resource[resource] = allocated_by_resource.get(resource, 0) + amount
+    inventory_check = all(amount <= inventory.get(resource, 0)
+                          for resource, amount in allocated_by_resource.items())
+    useful_cap_check = True
+    for claim in claims:
+        awards = {canonical_resource(name): amount
+                  for name, amount in allocation.get(claim.agent, {}).items()}
+        requested = {canonical_resource(name): amount
+                     for name, amount in claim.resources.items()}
+        for resource, amount in awards.items():
+            useful_cap_check &= amount <= min(
+                requested.get(resource, 0), unit_cap(claim, state.scenario, resource)
+            )
+    cap_check = inventory_check and useful_cap_check
     unresolved = _unresolved_shortfalls(state, allocation) if deficits else []
     supply_demand_gaps = {}
     if state.scenario.operations.supply_horizon_days is not None:
@@ -772,6 +756,20 @@ def finalize(state: NegotiationState, llm, tracer: Tracer) -> Plan:
                 if not any(item.resource == resource for item in unresolved):
                     unresolved.append(UnresolvedShortfall(resource=resource, unmet_amount=gap,
                                                           agents=["logistics"]))
+    checks_passed = []
+    checks_failed = []
+    if partition_check:
+        checks_passed.append("demand partitions are disjoint")
+    else:
+        checks_failed.append("demand partitions overlap")
+    if cap_check:
+        checks_passed.append("allocation capped by inventory and useful unit cap")
+    else:
+        checks_failed.append("allocation exceeds inventory or useful unit cap")
+    if deficits:
+        checks_failed.append("oversubscribed demand remains")
+    if supply_demand_gaps:
+        checks_failed.append("supply stock is below horizon need")
     prior_claims = {claim.agent: claim for claim in state.claims}
     for revision in reversed(state.claim_revisions):
         if revision.previous_claim is not None:
@@ -813,9 +811,8 @@ def finalize(state: NegotiationState, llm, tracer: Tracer) -> Plan:
         life_safety_gap=life_safety_gap,
         unassigned_resources=unassigned_resources,
         feasibility_report={
-            "checks_passed": ["demand partitions are disjoint", "allocation capped by inventory and useful unit cap"],
-            "checks_failed": (["oversubscribed demand remains"] if deficits else [])
-                             + (["supply stock is below horizon need"] if supply_demand_gaps else []),
+            "checks_passed": checks_passed,
+            "checks_failed": checks_failed,
             "unresolved_shortfalls": [item.model_dump() for item in unresolved],
             "unverified_assumptions": sorted({
                 label for label, unknown in (
@@ -824,7 +821,7 @@ def finalize(state: NegotiationState, llm, tracer: Tracer) -> Plan:
                     ("hospital receiving capacity", any(h.icu_beds_free is None for h in state.scenario.operations.hospitals)),
                 ) if unknown
             }),
-            "demand_totals": demand_totals(state.scenario),
+            "demand_totals": demand_report,
         },
         non_inventory_requests=[
             *state.non_inventory_requests,

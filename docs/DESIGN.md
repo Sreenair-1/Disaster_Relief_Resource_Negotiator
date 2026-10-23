@@ -38,7 +38,7 @@ flowchart TD
   GRAPH -->|Plan + trace events| RUN
   RUN -->|Transcript, allocation, warnings| UI
 
-  MED -->|hospital_capacity, casualty_estimate| TOOLS[lib.toolcall / tools.registry]
+  MED -->|hospital_capacity, receiving_capacity, transport_options, casualty_estimate| TOOLS[lib.toolcall / tools.registry]
   SHEL -->|shelter_capacity, zone_population| TOOLS
   LOG -->|road_status, vehicle_inventory, stock_levels, supply_needs| TOOLS
   TOOLS -->|ToolResult / failure details| MED
@@ -63,7 +63,9 @@ looks up the function in `tools.registry.TOOLS`, records the request and
 result, catches `ToolError`, and returns `ToolResult`. Ten tools are registered:
 `hospital_capacity`, `receiving_capacity`, `transport_options`,
 `casualty_estimate`, `shelter_capacity`, `zone_population`, `road_status`,
-`vehicle_inventory`, `stock_levels`, and `supply_needs`. `stock_levels` accepts
+`vehicle_inventory`, `stock_levels`, and `supply_needs`. Medical calls its four
+tools on the Medical edge; Logistics calls `supply_needs` only when a supply
+horizon is configured. `stock_levels` accepts
 food/water aliases and returns scenario-backed quantities; unknown quantities
 or rates remain `null`. Configured supply status is `critical` below one day,
 `low` below two days, and `sufficient` at two or more days. `supply_needs(zone)`
@@ -79,8 +81,9 @@ plus delivery vehicles. Aliases (`food`, `food_rations`, `water`,
 `drinking_water`) canonicalize to `food_packs` and `water_liters` during claim
 clamping, oversubscription checks, and event resource losses.
 
-Allocation assigns vehicles first using the existing priority-tier order. It
-then caps zone supply by horizon need, remaining stock, and delivery capacity
+For each resource, allocation processes vehicles first and food/water stocks
+last. Vehicles use the fixed life-safety tiers below. Food/water is assigned
+only to Logistics, by zone, up to horizon need, remaining stock, and delivery capacity
 (`vehicle units × payload × floor(window / trip time)`). Ground trucks require
 a feasible road and use `truck_trip_hours_by_zone`, falling back to
 `trip_hours_by_zone`; boats require known zone trip hours. Cut-off zones are
@@ -119,15 +122,20 @@ times. Missing
 capacity and facility values remain `None` and are treated as unverified.
 Legacy `hospitals: ["name"]` inputs remain valid and normalize into facility
 objects with unknown capacity and transfer status. `boats_needed` uses whole
-round trips within the response window; ground fallbacks are infeasible when
-`road_access` is zero. `unit_cap` limits known resource awards to the maximum
-useful units. These checks report unknowns as unverified, never as confirmed
-capacity.
+round trips within the response window. Truck allocation and
+`transport_options` use the `0.5` access threshold and also reject roads marked
+`blocked` or `landslide`. Separately, Medical rejects a fallback mentioning
+road, ground, or ambulance if any zone has `road_access <= 0`; this is a coarse
+scenario-wide rule. Medical also rejects a boat fallback when the boat
+inventory is unavailable. `unit_cap` limits known resource awards to the
+maximum useful units. These checks report unknowns as unverified, never as
+confirmed capacity.
 
 Medical also queries `receiving_capacity` and `transport_options`. Missing ICU
 or transfer-acceptance data marks support unverified; known ICU shortfall with
-no accepting facility raises a plan risk. Fallbacks naming blocked ground
-access or unavailable boats are rejected and traced.
+no accepting facility raises a plan risk. Medical rejects and traces ground
+fallbacks when any zone has zero access and boat fallbacks when no boats are
+available; the ground check is scenario-wide rather than zone-specific.
 
 `hospital_capacity` and `receiving_capacity` return facility objects directly
 from `Scenario.operations.hospitals`; unknown fields stay `null`. Transport
@@ -224,23 +232,26 @@ If the event was
 rejected (no affected agents), replan returns the unmodified state without
 incrementing `replans`. The UI compares this plan with the first run.
 
-Allocation and Mediator context use the same `score_claim` formula:
-`people_affected × severity_weight × urgency × (1 / max(time_window_hrs, 1)) × road_access_factor × feasibility_multiplier`.
+Allocation and Mediator context use `score_claim`:
+`people_affected * severity_weight * urgency * (1 / max(time_window_hrs, 1)) * road_access_factor * feasibility_multiplier`.
+Feasibility is usable requested quantity divided by requested quantity, capped at 1.
 Severity weights are policy assumptions listed in `docs/ASSUMPTIONS.md`.
-Road access is computed for each claim from the zones it names. If no zone is
-named, Medical uses critical-patient zones and Shelter uses stranded-population
-zones, weighted by the relevant people count; otherwise access is weighted by
-zone population. The road-access factor is floored at `0.05`, so a blocked
-route lowers a score without erasing it. For an oversubscribed resource, the
-Mediator allocates score tiers in priority order up to each claim's useful
-`unit_cap`; only an equally scored tier shares insufficient stock
-proportionally with largest-remainder rounding. Total awards are capped at
-inventory. Ties break by score descending, urgency descending, shorter response window,
-then agent name.
+Road access is computed per claim from zones named in its justification or
+fallback. If no zone is named, Medical uses critical-patient zones and Shelter
+uses zones with stranded residents; other claims use all zones. Access is
+weighted by the agent's relevant people count when available, otherwise by
+population. The road-access factor is floored at `0.05`, so a blocked route
+lowers a score without erasing it.
 
-Life-safety allocation is lexicographic: Medical critical-patient demand first,
-Shelter stranded non-critical demand second, then Logistics supply-dependent
-demand. Within each tier, scores determine proportional shares. `Plan` reports
+Awards follow fixed life-safety tiers: Medical (1), Shelter (2), then Logistics
+(3). For each non-food/water resource, tiers receive stock in that order,
+subject to inventory and useful `unit_cap`; a short tier divides its share by
+`score_claim` with largest-remainder rounding. The current specialist setup has
+one claimant in each tier. Scores rank claims and weight shares but never
+override tier order. Each claimant's total award is capped by its request and
+useful cap, with per-zone caps applied while placing the award. Food and water
+stocks are allocated afterward to Logistics zones using horizon need, delivery
+capacity, and remaining inventory. `Plan` reports
 both agent totals and `allocation_by_zone`; boats require known feasible round
 trips and trucks require a ground-feasible zone. Unusable inventory remains
 unassigned. Per-zone `coverage` reports demand, people served, and percentage
@@ -255,8 +266,11 @@ contradictions, then uses deterministic data-based explanations if the repair
 is still inconsistent or fails. Decision events preserve the LLM's reasoning;
 when unavailable, the safety fallback is explicitly traced with
 `reasoning_source="fallback"`. `Plan`
-also carries `feasibility_report` with checks, unresolved shortfalls, unknown
-assumptions, and de-duplicated demand totals. It records each claim once in
+also carries `feasibility_report`: partition disjointness is computed from
+`demand_totals.overlaps`, and allocation caps are checked against total
+inventory and each claim's request and useful `unit_cap`. Failed checks appear
+in `checks_failed`; successful checks appear in `checks_passed`, alongside
+unresolved shortfalls, unknown assumptions, and demand totals. It records each claim once in
 `disputes_log`: actual claim changes are
 described as revisions; Mediator stock caps say "awarded X of Y requested" and
 are never misattributed to the agent.
@@ -266,9 +280,10 @@ stateDiagram-v2
   [*] --> collect_claims
   collect_claims --> mediator_decide
   mediator_decide --> challenge: challenge_agent
-  mediator_decide --> fallback: request_fallback / ask_peer_estimate
-  mediator_decide --> finalize: accept_revision / finalize / round >= 3
-  challenge --> mediator_decide: claim_revision
+  mediator_decide --> fallback: request_fallback / ask_peer_estimate / accept_revision with uncertainty
+  mediator_decide --> finalize: finalize / accept_revision without uncertainty / no deficits / round >= 3
+  mediator_decide --> challenge: challenge_agent for remaining challenged agents
+  challenge --> mediator_decide: claim_revision; advance round after all challenged agents respond
   fallback --> mediator_decide: save Estimate to state
   finalize --> [*]
   [*] --> event_inject: replan(event_text)
@@ -297,62 +312,18 @@ stateDiagram-v2
 
 ## Contracts and samples
 
-The Pydantic models in `lib/schemas.py` are the shared I/O contracts:
-`Zone`, `Hospital`, `Operations`, `Scenario`, `Claim`, `Counter`, `Estimate`,
-`MediatorAction`, `Plan`, `ScenarioDiff`, and `NegotiationState`. The Scenario agent additionally
-validates a `ScenarioPatch` and computes a `ScenarioDiff` to detect no-ops
-and derive `affected_agents`. Runnable examples are `samples/input.json` and
-`samples/output.json`; the latter is an illustrative constrained plan, not a
-verified incident allocation. See `docs/ASSUMPTIONS.md` for every demo value.
+The Pydantic models in `lib/schemas.py` define the shared contracts. `Scenario`
+is the input model and `Plan` is the output model. The Scenario agent also
+validates `ScenarioPatch` and computes a `ScenarioDiff`. Field types, defaults,
+descriptions, and the complete input/output JSON examples are generated in
+[IO_DEFINITIONS.md](IO_DEFINITIONS.md) by `python scripts/gen_io_docs.py`.
 
-```json
-{
-  "scenario": {
-    "disaster_type": "flood",
-    "zones": [
-      {"name": "Zone A", "population": 500, "stranded": 300, "critical_patients": 0, "road_access": 0.5, "supply_dependent": 150},
-      {"name": "Zone B", "population": 120, "stranded": 12, "critical_patients": 12, "road_access": 0.3, "supply_dependent": 50}
-    ],
-    "resources": {"boats": 3, "food_packs": 717, "water_liters": 6144},
-    "hospitals": ["Regional Hospital"],
-    "roads": {"Zone A": "blocked", "Zone B": "flooded"},
-    "operations": {
-      "boat_capacity_persons": 50,
-      "trip_hours_by_zone": {"Zone A": 2.0, "Zone B": 2.0},
-      "ambulance_capacity": 2,
-      "food_packs_per_person_day": 1,
-      "water_liters_per_person_day": 10,
-      "supply_horizon_days": 2,
-      "truck_payload_packs": 1000,
-      "truck_payload_liters": 10000,
-      "boat_payload_packs": 200,
-      "boat_payload_liters": 2000,
-      "truck_trip_hours_by_zone": {"Zone A": 2.0, "Zone B": 2.0},
-      "hospitals": [{"name": "Regional Hospital"}]
-    }
-  },
-  "claim": {
-    "agent": "medical", "resources": {"boats": 2}, "people_affected": 12,
-    "urgency": 10, "time_window_hrs": 2, "justification": "Twelve critical patients need transfer.",
-    "fallback_option": "Move the highest acuity patients first.", "uncertainty": 0.0
-  },
-  "counter": {"to_agent": "medical", "question": "Can you reduce or phase the boat request?"},
-  "estimate": {"agent": "logistics", "question": "Is Zone B reachable by truck?", "value": 0.2, "confidence": 0.8, "rationale": "Road access is severely reduced."},
-  "mediator_action": "challenge_agent",
-  "scenario_patch": {
-    "is_valid": true, "summary": "Bridge collapse severs Zone A road access.",
-    "affected_agents": ["logistics", "shelter"], "road_access": {"Zone A": 0.0},
-    "roads": {"Zone A": "blocked"}, "zone_casualties": {}, "zone_stranded": {},
-    "resource_loss": {}, "hospital_capacity": {}, "urgency_hints": {"shelter": 9}
-  },
-  "plan": {
-    "allocation": {"medical": {"boats": 2}, "shelter": {"boats": 1}},
-    "justifications": {"medical": "Critical patient urgency", "shelter": "Remaining boat capacity"},
-    "conflicts_resolved": ["Demand exceeded boat inventory; awards capped to stock."],
-    "replans": 0, "rounds_used": 2, "disputes_log": []
-  }
-}
-```
+`samples/input.json` is the seed scenario. `samples/output.json` is an
+illustrative plan; `samples/output_full_run.json` and
+`samples/trace_full_run.jsonl` are stored run artifacts. The generator validates
+the input and output models and embeds both examples, then checks that the
+trace's `scenario_loaded` payload matches `samples/input.json`; it exits with an
+error until the stored run matches that seed scenario.
 
 `NegotiationState` holds the scenario, current round, claims, counters,
 estimates, events, optional plan, replan count, and affected-agent list.
@@ -378,10 +349,10 @@ events and writes each event as JSONL.
 ## Runtime and deployment
 
 The dependency pins in `requirements.txt` are the versions installed in the
-Python 3.14.7 development environment. Streamlit's current documentation lists
-Python 3.14 as supported by Community Cloud and allows version selection in
-Advanced settings; Cloud's deployment guide currently says its default is
-Python 3.12. Select 3.14 for this app. See [Cloud deployment](https://docs.streamlit.io/deploy/streamlit-community-cloud/deploy-your-app)
+Python 3.14.7 development environment. Streamlit Community Cloud documents
+Python 3.12 as its default and provides a Python version selector. The deployed
+runtime must match the Python version tested for this application; this project
+does not designate a deployment version. See [Cloud deployment](https://docs.streamlit.io/deploy/streamlit-community-cloud/deploy-your-app)
 and [supported Python versions](https://docs.streamlit.io/knowledge-base/using-streamlit/sanity-checks).
 
 ## Trace self-check

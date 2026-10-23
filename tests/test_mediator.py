@@ -206,6 +206,25 @@ def test_changing_road_access_changes_allocation(sample_scenario):
     assert after_plan.allocation["zeta"] == {"boats": 1}
 
 
+def test_feasibility_report_computes_partition_and_allocation_checks(sample_scenario):
+    state = _state(sample_scenario)
+    plan = finalize(state, StubLLM([_complete_reasoning(state)]), MemoryTracer())
+
+    assert "demand partitions are disjoint" in plan.feasibility_report["checks_passed"]
+    assert "allocation capped by inventory and useful unit cap" in plan.feasibility_report["checks_passed"]
+    assert not any("demand partition" in item or "allocation exceeds" in item
+                   for item in plan.feasibility_report["checks_failed"])
+
+
+def test_feasibility_report_fails_when_demand_totals_report_overlap(sample_scenario):
+    sample_scenario.zones[0].supply_dependent = sample_scenario.zones[0].population
+    state = _state(sample_scenario)
+    plan = finalize(state, StubLLM([_complete_reasoning(state)]), MemoryTracer())
+
+    assert "demand partitions overlap" in plan.feasibility_report["checks_failed"]
+    assert "demand partitions are disjoint" not in plan.feasibility_report["checks_passed"]
+
+
 def test_empty_reasoning_retries_then_uses_data_driven_text(sample_scenario):
     state = _state(sample_scenario)
     llm = StubLLM([
