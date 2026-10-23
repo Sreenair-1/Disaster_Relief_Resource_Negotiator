@@ -347,3 +347,10 @@ reassessment, recovery after tool failure, scenario-supported hospital facts,
 inventory totals, numeric justifications, and shortfall resource names. It
 prints PASS/FAIL for each invariant and exits nonzero on failure. It does not
 repair or rewrite either artifact.
+
+## UI presentation
+
+Pure helpers in `ui/format.py` convert trace events into readable summaries,
+group events by negotiation round, and summarize plans without relying on newer
+optional plan fields. The same helpers produce explicit arrows and reasons for
+before/after allocation comparisons.

@@ -116,3 +116,10 @@ access to Meppadi Valley.`. Enable **Simulate tool failure**, inject
 failure. Download the JSONL as `samples/trace_full_run.jsonl` and the final
 plan as `samples/output_full_run.json`. Run the checker command above; it
 prints each check and exits nonzero if any invariant fails.
+
+### UI presentation
+
+The Streamlit control room turns trace records into short plain-language event
+summaries, with round grouping and named agent icons. Plan summaries tolerate
+older saved plans that omit optional fields and show the allocation outcome,
+critical-patient coverage, and before/after changes after a replan.
