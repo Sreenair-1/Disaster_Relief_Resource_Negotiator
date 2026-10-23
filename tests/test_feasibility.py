@@ -6,6 +6,7 @@ from lib.feasibility import (
     unit_cap,
     validate_claim_demand,
     validate_claim_facts,
+    clamp_claim_resources,
 )
 from lib.schemas import Claim, Operations, Scenario, Zone
 
@@ -70,3 +71,15 @@ def test_claim_capacity_fact_is_corrected_to_scenario_value(sample_scenario):
     assert "50 persons per boat" in corrected.justification
     assert "1,300 persons per boat" not in corrected.justification
     assert notes == ["boat capacity corrected from 1300 to 50 persons"]
+
+
+def test_resource_requests_are_clamped_and_non_inventory_names_dropped():
+    scenario = Scenario(disaster_type="flood", zones=[Zone(name="A", population=1)],
+                        resources={"boats": 2})
+    claim = Claim(agent="logistics", resources={"boats": 5, "food_rations": 20},
+                  people_affected=1, urgency=5, time_window_hrs=1,
+                  justification="need", fallback_option="phase")
+    clean, missing, changes = clamp_claim_resources(claim, scenario)
+    assert clean.resources == {"boats": 2}
+    assert missing == [{"resource": "food_rations", "requested": 20}]
+    assert changes == {"boats": {"requested": 5, "allowed": 2}}

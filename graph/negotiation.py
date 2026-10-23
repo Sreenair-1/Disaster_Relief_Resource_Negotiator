@@ -9,7 +9,8 @@ from agents.logistics import estimate as logistics_estimate, make_claim as logis
 from agents.medical import estimate as medical_estimate, make_claim as medical_claim
 from agents.mediator import decide_next, finalize as mediator_finalize
 from agents.shelter import estimate as shelter_estimate, make_claim as shelter_claim
-from lib.feasibility import demand_totals, validate_claim_demand, validate_claim_facts
+from lib.feasibility import clamp_claim_resources, demand_totals, has_added_evidence, validate_claim_demand, validate_claim_facts
+from lib.scoring import over_subscribed
 from lib.schemas import ClaimRevision, Counter, MediatorAction, NegotiationState
 
 CLAIMERS = {"medical": medical_claim, "shelter": shelter_claim, "logistics": logistics_claim}
@@ -43,7 +44,15 @@ def _collect_claims(ctx: _GraphState) -> _GraphState:
                 "before": original_claim.model_dump(), "after": claim.model_dump(),
             })
         checked = validate_claim_demand(claim, state.scenario)
-        state.claims.append(checked.claim)
+        bounded, non_inventory, resource_changes = clamp_claim_resources(checked.claim, state.scenario)
+        state.claims.append(bounded)
+        state.non_inventory_requests.extend({"agent": agent, **item} for item in non_inventory)
+        if non_inventory or resource_changes:
+            ctx["tracer"].log(agent, "mediator", "claim_clamped", {
+                "non_inventory_requests": non_inventory,
+                "resource_changes": resource_changes,
+                "before": checked.claim.model_dump(), "after": bounded.model_dump(),
+            })
         if checked.requested_people != checked.eligible_people:
             ctx["tracer"].log(agent, "mediator", "claim_demand_clamped", {
                 "requested_people": checked.requested_people,
@@ -83,6 +92,8 @@ def _claim_change_summary(old_claim, new_claim) -> dict[str, Any]:
         changes["people_affected"] = {"before": old_claim.people_affected, "after": new_claim.people_affected}
     if old_claim.uncertainty != new_claim.uncertainty:
         changes["uncertainty"] = {"before": old_claim.uncertainty, "after": new_claim.uncertainty}
+    if old_claim.justification != new_claim.justification:
+        changes["justification"] = {"before": old_claim.justification, "after": new_claim.justification}
     return changes
 
 
@@ -92,6 +103,7 @@ def _challenge(ctx: _GraphState) -> _GraphState:
     if agent in CLAIMERS:
         index = next((i for i, claim in enumerate(state.claims) if claim.agent == agent), None)
         old_claim = state.claims[index] if index is not None else None
+        old_deficits = over_subscribed(state.claims, state.scenario)
         revision = CLAIMERS[agent](state, ctx["llm"], ctx["tracer"], _counter_for(state, agent))
         original_revision = revision
         revision, corrections = validate_claim_facts(revision, state.scenario)
@@ -101,7 +113,14 @@ def _challenge(ctx: _GraphState) -> _GraphState:
                 "before": original_revision.model_dump(), "after": revision.model_dump(),
             })
         checked = validate_claim_demand(revision, state.scenario)
-        revision = checked.claim
+        revision, non_inventory, resource_changes = clamp_claim_resources(checked.claim, state.scenario)
+        state.non_inventory_requests.extend({"agent": agent, **item} for item in non_inventory)
+        if non_inventory or resource_changes:
+            ctx["tracer"].log(agent, "mediator", "claim_clamped", {
+                "non_inventory_requests": non_inventory,
+                "resource_changes": resource_changes,
+                "before": checked.claim.model_dump(), "after": revision.model_dump(),
+            })
         if checked.requested_people != checked.eligible_people:
             ctx["tracer"].log(agent, "mediator", "claim_demand_clamped", {
                 "requested_people": checked.requested_people,
@@ -115,7 +134,13 @@ def _challenge(ctx: _GraphState) -> _GraphState:
 
         # Trace the revised claim with a change summary
         changes = _claim_change_summary(old_claim, revision) if old_claim else {}
-        defended_unchanged = old_claim is not None and not changes
+        candidate_claims = [revision if claim.agent == agent else claim for claim in state.claims]
+        new_deficits = over_subscribed(candidate_claims, state.scenario)
+        reduced_oversubscription = any(new_deficits.get(resource, 0) < amount
+                                       for resource, amount in old_deficits.items())
+        has_evidence = has_added_evidence(old_claim, revision)
+        meaningful = reduced_oversubscription or has_evidence
+        defended_unchanged = not meaningful
         revision_record = ClaimRevision(
             agent=agent,
             round=state.round + 1,
@@ -123,7 +148,8 @@ def _challenge(ctx: _GraphState) -> _GraphState:
             current_claim=revision.model_copy(deep=True),
             changes=changes,
             defended_unchanged=defended_unchanged,
-            has_evidence=bool(revision.justification.strip()),
+            has_evidence=has_evidence,
+            meaningful_revision=meaningful,
         )
         state.claim_revisions.append(revision_record)
         ctx["tracer"].log(agent, "mediator", "claim_revision", {
@@ -134,6 +160,7 @@ def _challenge(ctx: _GraphState) -> _GraphState:
             "revised_claim": revision.model_dump(),
             "revision_round": revision_record.round,
             "has_evidence": revision_record.has_evidence,
+            "meaningful_revision": revision_record.meaningful_revision,
         })
     state.round += 1
     return {**ctx, "state": state, "action": None}

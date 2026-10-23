@@ -70,3 +70,12 @@ explicitly assumed for a software demo, not verified local data:
   capacity is inferred from claim prose.
 - The six-round negotiation cap is a workflow safety setting, not an empirically
   derived response limit.
+
+## Follow-up commit 3: claim validation
+
+- Claim resource amounts are capped at the scenario's listed inventory. Resource
+  names absent from inventory are recorded as non-inventory requests and are
+  never assigned an inferred stock value or treated as inventory shortfalls.
+- A revision is meaningful only when it reduces a resource deficit or adds
+  scenario-specific evidence; urgency or uncertainty edits alone are treated as
+  an unchanged defense. This is an explicit negotiation policy.

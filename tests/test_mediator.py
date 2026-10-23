@@ -252,6 +252,16 @@ def test_contradictory_reasoning_retries_then_uses_consistent_fallback(sample_sc
     assert "unverified_assumptions" in plan.feasibility_report
 
 
+def test_non_inventory_requests_are_reported_outside_shortfalls(sample_scenario):
+    state = _state(sample_scenario)
+    state.claims[0].resources["food_rations"] = 12
+    llm = StubLLM([{"justifications": {}, "conflicts_resolved": [], "disputes_log": []},
+                   {"justifications": {}, "conflicts_resolved": [], "disputes_log": []}])
+    plan = finalize(state, llm, MemoryTracer())
+    assert {item["resource"] for item in plan.non_inventory_requests} == {"food_rations"}
+    assert all(item.resource != "food_rations" for item in plan.unresolved_shortfalls)
+
+
 def score_claim_for_test(claim, state):
     from lib.scoring import score_claim
     return f"{score_claim(claim, state.scenario):.3f}"

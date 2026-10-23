@@ -257,7 +257,23 @@ def test_challenge_produces_claim_revision_trace(monkeypatch):
     assert "resources" in rev["payload"]["changes"]
     assert rev["payload"]["changes"]["resources"]["before"] == {"boats": 2}
     assert rev["payload"]["changes"]["resources"]["after"] == {"boats": 1}
-    assert "urgency" in rev["payload"]["changes"]
+
+
+def test_urgency_only_change_is_not_a_meaningful_revision(monkeypatch):
+    import graph.negotiation as graph
+    tracer = MemoryTracer()
+    state = _oversubscribed_state()
+    previous = state.claims[0]
+    counter = Counter(to_agent="medical", question="Defend your boat request", issued_round=1)
+    state.counters.append(counter)
+    response = previous.model_copy(update={"urgency": previous.urgency - 1})
+    monkeypatch.setattr(graph, "CLAIMERS", {"medical": lambda *args, **kwargs: response})
+    graph._challenge({"state": state, "llm": StubLLM([]), "tracer": tracer,
+                      "action": MediatorAction.challenge_agent, "next_agent": "medical"})
+    event = next(e for e in tracer.events if e["type"] == "claim_revision")
+    assert event["payload"]["defended_unchanged"] is True
+    assert event["payload"]["meaningful_revision"] is False
+    assert "urgency" in event["payload"]["changes"]
 
 
 def test_challenge_defended_unchanged_is_traced(monkeypatch):

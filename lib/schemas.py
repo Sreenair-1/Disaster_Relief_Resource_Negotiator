@@ -106,6 +106,7 @@ class ClaimRevision(BaseModel):
     changes: dict[str, Any] = Field(default_factory=dict)
     defended_unchanged: bool = False
     has_evidence: bool = False
+    meaningful_revision: bool = False
 
 
 class Estimate(BaseModel):
@@ -142,6 +143,7 @@ class Plan(BaseModel):
     risks: list[str] = Field(default_factory=list)
     feasibility_report: dict[str, Any] = Field(default_factory=dict)
     reassessments: list[dict[str, Any]] = Field(default_factory=list)
+    non_inventory_requests: list[dict[str, Any]] = Field(default_factory=list)
 
 
 class ScenarioDiff(BaseModel):
@@ -168,3 +170,4 @@ class NegotiationState(BaseModel):
     replans: int = 0
     affected_agents: list[str] = Field(default_factory=list)
     claim_revisions: list[ClaimRevision] = Field(default_factory=list)
+    non_inventory_requests: list[dict[str, Any]] = Field(default_factory=list)

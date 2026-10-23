@@ -64,6 +64,35 @@ def validate_claim_facts(claim: Claim, scenario: Scenario) -> tuple[Claim, list[
     return (claim.model_copy(update=updates) if updates else claim), corrections
 
 
+def clamp_claim_resources(claim: Claim, scenario: Scenario) -> tuple[Claim, list[dict[str, int]], dict[str, dict[str, int]]]:
+    """Drop non-inventory asks and clamp known resources to available stock."""
+    resources: dict[str, int] = {}
+    non_inventory: list[dict[str, int]] = []
+    changes: dict[str, dict[str, int]] = {}
+    for name, requested in claim.resources.items():
+        if name not in scenario.resources:
+            non_inventory.append({"resource": name, "requested": requested})
+            continue
+        allowed = min(max(0, requested), scenario.resources[name])
+        if allowed != requested:
+            changes[name] = {"requested": requested, "allowed": allowed}
+        if allowed:
+            resources[name] = allowed
+    clean = claim.model_copy(update={"resources": resources}) if resources != claim.resources else claim
+    return clean, non_inventory, changes
+
+
+def has_added_evidence(previous: Claim | None, current: Claim) -> bool:
+    """Recognize a changed justification that cites scenario-relevant evidence."""
+    if previous is None or previous.justification == current.justification:
+        return False
+    text = current.justification.casefold()
+    return any(token in text for token in (
+        "hospital", "icu", "road", "route", "trip", "capacity", "patient",
+        "zone", "verified", "scenario", "bed", "data",
+    )) or any(char.isdigit() for char in text)
+
+
 def demand_by_zone(zone: Zone) -> ZoneDemand:
     """Partition a zone population into disjoint demand groups.
 

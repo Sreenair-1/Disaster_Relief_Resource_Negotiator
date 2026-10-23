@@ -67,6 +67,8 @@ def over_subscribed(claims: list[Claim], scenario: Scenario) -> dict[str, int]:
     requested: defaultdict[str, int] = defaultdict(int)
     for claim in claims:
         for resource, amount in claim.resources.items():
+            if resource not in scenario.resources:
+                continue
             requested[resource] += amount
     return {
         resource: amount - scenario.resources.get(resource, 0)

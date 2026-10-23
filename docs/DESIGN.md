@@ -131,6 +131,13 @@ estimate informs the next decision or challenge rather than ending at the trace.
 as event type `claim_revision` with a change summary (resources, urgency,
 time_window_hrs vs. the previous claim). An agent may defend its claim unchanged,
 but the trace records `defended_unchanged: true` with the justification.
+After every specialist response, numeric boat-capacity and route-time claims
+are checked against `operations`; contradictions are corrected and traced as
+`claim_corrected`. Every known resource request is clamped to inventory, while
+unknown resource names are dropped from allocation and listed separately as
+`Plan.non_inventory_requests`. A revision counts only if it reduces an
+oversubscription or adds scenario-specific evidence; urgency and uncertainty
+changes alone count as an unchanged defense.
 
 `graph.replan.replan(state, event_text, llm, tracer)` invokes
 `agents.scenario.inject_event`. The Scenario agent resolves the event against

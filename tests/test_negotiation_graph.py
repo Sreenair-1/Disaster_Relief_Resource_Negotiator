@@ -85,3 +85,25 @@ def test_claim_fact_correction_is_traced(monkeypatch, tracer):
     assert len(corrected) == 3
     assert "1,300 persons per boat" in corrected[0]["payload"]["before"]["justification"]
     assert "50 persons per boat" in corrected[0]["payload"]["after"]["justification"]
+
+
+def test_claims_are_inventory_clamped_and_unknown_resources_are_reported(monkeypatch, tracer):
+    import graph.negotiation as graph
+
+    def overclaim(agent):
+        return lambda *args, **kwargs: Claim(
+            agent=agent, resources={"boats": 8, "food_rations": 99},
+            people_affected=1, urgency=5, time_window_hrs=2,
+            justification="need", fallback_option="phase",
+        )
+    monkeypatch.setattr(graph, "CLAIMERS", {
+        name: overclaim(name) for name in ("medical", "shelter", "logistics")
+    })
+    monkeypatch.setattr(graph, "decide_next", lambda *args: MediatorAction.finalize)
+    monkeypatch.setattr(graph, "mediator_finalize", lambda state, llm, tracer: Plan())
+    scenario = Scenario(disaster_type="flood", zones=[Zone(name="A", population=1)],
+                        resources={"boats": 2})
+    state = graph.run_negotiation(scenario, StubLLM(), tracer)
+    assert all(claim.resources == {"boats": 2} for claim in state.claims)
+    assert len(state.non_inventory_requests) == 3
+    assert len([event for event in tracer.events if event["type"] == "claim_clamped"]) == 3

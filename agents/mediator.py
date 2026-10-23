@@ -37,7 +37,7 @@ def _agents_revised_since_last_counter(state: NegotiationState) -> set[str]:
     revised: set[str] = set()
     for agent in {counter.to_agent for counter in state.counters}:
         response = _latest_counter_response(state, agent)
-        if response and not response.defended_unchanged:
+        if response and response.meaningful_revision:
             revised.add(agent)
     return revised
 
@@ -267,6 +267,8 @@ def _disputes_for_allocation(state, claims, allocation):
 
         caps: list[str] = []
         for resource, requested in sorted(claim.resources.items()):
+            if resource not in state.scenario.resources:
+                continue
             awarded = allocation.get(claim.agent, {}).get(resource, 0)
             if awarded < requested:
                 caps.append(
@@ -395,7 +397,8 @@ def finalize(state: NegotiationState, llm, tracer: Tracer) -> Plan:
     for claim in claims:
         allocation[claim.agent] = {}
 
-    resources = sorted({resource for claim in claims for resource in claim.resources})
+    resources = sorted({resource for claim in claims for resource in claim.resources
+                        if resource in state.scenario.resources})
     for resource in resources:
         awards = _resource_awards(
             claims,
@@ -511,6 +514,12 @@ def finalize(state: NegotiationState, llm, tracer: Tracer) -> Plan:
             }),
             "demand_totals": demand_totals(state.scenario),
         },
+        non_inventory_requests=[
+            *state.non_inventory_requests,
+            *({"agent": claim.agent, "resource": resource, "requested": amount}
+              for claim in state.claims for resource, amount in claim.resources.items()
+              if resource not in state.scenario.resources),
+        ],
     )
     tracer.log("mediator", "system", "plan", plan.model_dump())
     return plan
