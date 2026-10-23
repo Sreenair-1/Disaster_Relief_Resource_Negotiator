@@ -198,6 +198,15 @@ proportionally with largest-remainder rounding. Total awards are capped at
 inventory. Ties break by score descending, urgency descending, shorter response window,
 then agent name.
 
+Life-safety allocation is lexicographic: Medical critical-patient demand first,
+Shelter stranded non-critical demand second, then Logistics supply-dependent
+demand. Within each tier, scores determine proportional shares. `Plan` reports
+both agent totals and `allocation_by_zone`; boats require known feasible round
+trips and trucks require a ground-feasible zone. Unusable inventory remains
+unassigned. Per-zone `coverage` reports demand, people served, and percentage
+using `units × capacity × floor(response_window / round_trip_hours)`. The plan
+sets `life_safety_gap` if any critical patients remain uncovered.
+
 Final allocation reasoning must give each claimant a non-empty explanation with
 its score, rank, requested and awarded amounts, shortfall, and comparison with
 competing claims. The Mediator validates the numeric citations and priority

@@ -120,6 +120,7 @@ def test_seed_three_boats_gives_medical_a_boat():
         "zones": [{"name": "Zone A", "population": 1000, "stranded": 312,
                    "critical_patients": 12, "road_access": 1.0}],
         "resources": {"boats": 3},
+        "operations": {"boat_capacity_persons": 50, "trip_hours_by_zone": {"Zone A": 2.0}},
     })
     state = NegotiationState(
         scenario=scenario,
@@ -165,12 +166,14 @@ def test_changing_road_access_changes_allocation(sample_scenario):
         Zone(name="Medical Zone", population=100, critical_patients=20, road_access=1.0),
         Zone(name="Logistics Zone", population=100, road_access=0.5),
     ]
+    sample_scenario.operations.boat_capacity_persons = 50
+    sample_scenario.operations.trip_hours_by_zone = {"Medical Zone": 2.0, "Logistics Zone": 2.0}
     claims = [
-        _claim("medical", {"boats": 1}, 20, 8, 4, uncertainty=0),
-        _claim("logistics", {"boats": 1}, 200, 8, 4, uncertainty=0),
+        _claim("alpha", {"boats": 1}, 20, 8, 4, uncertainty=0),
+        _claim("zeta", {"boats": 1}, 20, 8, 4, uncertainty=0),
     ]
-    claims[0].justification = "Patients in Medical Zone need transport."
-    claims[1].justification = "Supplies for Logistics Zone need transport."
+    claims[0].justification = "Medical Zone access."
+    claims[1].justification = "Logistics Zone access."
     before = NegotiationState(scenario=sample_scenario, claims=claims)
     changed_scenario = sample_scenario.model_copy(deep=True)
     changed_scenario.zones[0].road_access = 0.05
@@ -182,8 +185,8 @@ def test_changing_road_access_changes_allocation(sample_scenario):
     before_plan = finalize(before, llm_for(), MemoryTracer())
     after_plan = finalize(after, llm_for(), MemoryTracer())
 
-    assert before_plan.allocation["medical"] == {"boats": 1}
-    assert after_plan.allocation["logistics"] == {"boats": 1}
+    assert before_plan.allocation["alpha"] == {"boats": 1}
+    assert after_plan.allocation["zeta"] == {"boats": 1}
 
 
 def test_empty_reasoning_retries_then_uses_data_driven_text(sample_scenario):
@@ -238,6 +241,7 @@ def test_contradictory_reasoning_retries_then_uses_consistent_fallback(sample_sc
     plan = finalize(state, llm, MemoryTracer())
     assert not llm.responses
     ranked = sorted(state.claims, key=lambda item: (
+        1 if item.agent == "medical" else 2 if item.agent == "shelter" else 3,
         -float(score_claim_for_test(item, state)), -item.urgency,
         item.time_window_hrs, item.agent,
     ))

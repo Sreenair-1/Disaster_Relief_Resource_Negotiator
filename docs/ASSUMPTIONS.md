@@ -79,3 +79,12 @@ explicitly assumed for a software demo, not verified local data:
 - A revision is meaningful only when it reduces a resource deficit or adds
   scenario-specific evidence; urgency or uncertainty edits alone are treated as
   an unchanged defense. This is an explicit negotiation policy.
+
+## Follow-up commit 4: life-safety tiers
+
+- Priority tiers follow the modeled demand classes (critical, stranded
+  non-critical, supply-dependent); their ordering is a policy choice, not a
+  measured clinical weighting. Within a tier the existing score is used.
+- Coverage counts are capped at each tier's demand. No additional capacity is
+  inferred when operations fields are unknown; such units cannot be assigned
+  as feasible boats or trucks.

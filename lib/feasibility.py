@@ -6,6 +6,8 @@ import re
 
 from lib.schemas import Claim, Operations, Scenario, Zone
 
+GROUND_ACCESS_THRESHOLD = 0.5
+
 
 @dataclass(frozen=True)
 class ZoneDemand:
@@ -194,8 +196,13 @@ def route_feasible(zone: Zone, mode: str) -> bool | None:
     """Check ground-route access; unknown modes and water routes remain unverified."""
     normalized_mode = mode.casefold().replace("-", "_")
     if normalized_mode in {"road", "ground", "ambulance", "truck", "boat_by_road"}:
-        return zone.road_access > 0
+        return zone.road_access >= GROUND_ACCESS_THRESHOLD
     return None
+
+
+def ground_route_feasible(zone: Zone, scenario: Scenario) -> bool:
+    return (route_feasible(zone, "ground") is True
+            and scenario.roads.get(zone.name, "").casefold() not in {"blocked", "landslide"})
 
 
 def unit_cap(claim: Claim, scenario: Scenario, resource: str) -> int:

@@ -2,12 +2,13 @@
 
 from pathlib import Path
 import json
-from math import floor
+from math import ceil, floor
 import re
 from pydantic import BaseModel, Field
 
 from lib.schemas import Counter, MediatorAction, NegotiationState, Plan, UnresolvedShortfall
-from lib.feasibility import unit_cap
+from lib.feasibility import (demand_by_zone, ground_route_feasible, unit_cap,
+                             boats_needed)
 from lib.feasibility import demand_totals
 from lib.scoring import over_subscribed, score_claim
 from lib.tracing import Tracer
@@ -234,6 +235,140 @@ def _resource_awards(claims, resource, inventory, scores, order, scenario):
     return awards
 
 
+def _claim_tier(agent: str) -> int:
+    return {"medical": 1, "shelter": 2, "logistics": 3}.get(agent, 3)
+
+
+def _zone_people(agent: str, zone, scenario) -> int:
+    part = demand_by_zone(zone)
+    field = {"medical": "critical_patients", "shelter": "stranded_non_critical",
+             "logistics": "supply_dependent"}.get(agent)
+    return getattr(part, field) if field else part.total_union
+
+
+def _zone_unit_caps(claim, resource, scenario):
+    caps = {}
+    for zone in scenario.zones:
+        people = _zone_people(claim.agent, zone, scenario)
+        if people <= 0:
+            continue
+        if resource == "boats":
+            need = boats_needed(zone, people, claim.time_window_hrs, scenario.operations)
+            if need is not None:
+                caps[zone.name] = need
+        elif resource == "trucks":
+            capacity = scenario.operations.truck_capacity_persons
+            if capacity and ground_route_feasible(zone, scenario):
+                caps[zone.name] = ceil(people / capacity)
+        elif resource == "shelter_beds":
+            caps[zone.name] = people
+        else:
+            caps[zone.name] = max(1, people)
+    return caps
+
+
+def _proportional_tier_awards(claims, resource, budget, scores, caps, scenario):
+    requests = {c.agent: min(max(0, c.resources.get(resource, 0)), caps.get(c.agent, 0))
+                for c in claims}
+    awards = {agent: 0 for agent in requests}
+    remaining = min(max(0, budget), sum(requests.values()))
+    active = [c for c in claims if requests[c.agent] > 0]
+    while remaining and active:
+        weights = {c.agent: max(scores[c.agent], 0.0) for c in active}
+        if sum(weights.values()) == 0:
+            weights = {c.agent: 1.0 for c in active}
+        weight_total = sum(weights.values())
+        quotas = {c.agent: remaining * weights[c.agent] / weight_total for c in active}
+        capped = [c for c in active if quotas[c.agent] >= requests[c.agent] - awards[c.agent]]
+        if capped:
+            for c in capped:
+                take = requests[c.agent] - awards[c.agent]
+                awards[c.agent] += take
+                remaining -= take
+                active.remove(c)
+            continue
+        floors = {c.agent: floor(quotas[c.agent]) for c in active}
+        for agent, amount in floors.items():
+            awards[agent] += amount
+        remainder = remaining - sum(floors.values())
+        tie_order = sorted(active, key=lambda c: _claim_order(c, scenario))
+        tie_order.sort(key=lambda c: -(quotas[c.agent] - floors[c.agent]))
+        for c in tie_order[:remainder]:
+            awards[c.agent] += 1
+        remaining = 0
+    return awards
+
+
+def _allocation_by_zone(claims, scenario, scores):
+    by_zone = {zone.name: {} for zone in scenario.zones}
+    by_agent_zone = {claim.agent: {zone.name: {} for zone in scenario.zones} for claim in claims}
+    totals = {claim.agent: {} for claim in claims}
+    remaining_stock = dict(scenario.resources)
+    all_resources = sorted({r for claim in claims for r in claim.resources
+                            if r in scenario.resources})
+    for resource in all_resources:
+        for tier in (1, 2, 3):
+            tier_claims = [c for c in claims if _claim_tier(c.agent) == tier]
+            zone_caps = {c.agent: _zone_unit_caps(c, resource, scenario) for c in tier_claims}
+            total_caps = {agent: sum(values.values()) for agent, values in zone_caps.items()}
+            awards = _proportional_tier_awards(
+                tier_claims, resource, remaining_stock.get(resource, 0), scores,
+                total_caps, scenario,
+            )
+            for claim in tier_claims:
+                award = awards.get(claim.agent, 0)
+                if not award:
+                    continue
+                available_zones = sorted(
+                    zone_caps[claim.agent].items(),
+                    key=lambda item: (-_zone_people(claim.agent,
+                        next(z for z in scenario.zones if z.name == item[0]), scenario), item[0]),
+                )
+                for name, cap in available_zones:
+                    placed = min(award, cap)
+                    if placed:
+                        by_zone[name][resource] = by_zone[name].get(resource, 0) + placed
+                        by_agent_zone[claim.agent][name][resource] = (
+                            by_agent_zone[claim.agent][name].get(resource, 0) + placed
+                        )
+                        totals[claim.agent][resource] = totals[claim.agent].get(resource, 0) + placed
+                        award -= placed
+                remaining_stock[resource] -= awards.get(claim.agent, 0)
+    unassigned = {r: amount for r, amount in remaining_stock.items() if amount > 0}
+    return totals, by_zone, unassigned, by_agent_zone
+
+
+def _coverage_by_zone(allocation_by_zone, by_agent_zone, claims, scenario):
+    coverage = {}
+    for zone in scenario.zones:
+        demand = demand_by_zone(zone)
+        tiers = {
+            "critical_patients": (demand.critical_patients, "medical"),
+            "stranded": (demand.stranded_non_critical, "shelter"),
+            "supply_dependent": (demand.supply_dependent, "logistics"),
+        }
+        zone_result = {}
+        for tier, (people, agent) in tiers.items():
+            claim = next((c for c in claims if c.agent == agent), None)
+            if not people or claim is None:
+                zone_result[tier] = {"demand": people, "people_served": 0, "coverage_percent": 100.0 if not people else 0.0}
+                continue
+            served = 0
+            allocation = by_agent_zone.get(agent, {}).get(zone.name, {})
+            trips = floor(claim.time_window_hrs / scenario.operations.trip_hours_by_zone.get(zone.name, 0)) if scenario.operations.trip_hours_by_zone.get(zone.name, 0) else 0
+            if scenario.operations.boat_capacity_persons:
+                served += allocation.get("boats", 0) * scenario.operations.boat_capacity_persons * trips
+            if scenario.operations.truck_capacity_persons and ground_route_feasible(zone, scenario):
+                served += allocation.get("trucks", 0) * scenario.operations.truck_capacity_persons * trips
+            served = min(people, served)
+            zone_result[tier] = {
+                "demand": people, "people_served": served,
+                "coverage_percent": round(100 * served / people, 1),
+            }
+        coverage[zone.name] = zone_result
+    return coverage
+
+
 def _missing_justifications(reasoning, agents):
     boilerplate = "allocated according to deterministic priority and available inventory."
     return [
@@ -392,25 +527,18 @@ def _justification_contradictions(reasoning, claims, allocation, scores):
 def finalize(state: NegotiationState, llm, tracer: Tracer) -> Plan:
     """Allocate by shared claim scores within inventory, then explain."""
     allocation: dict[str, dict[str, int]] = {}
-    claims = sorted(state.claims, key=lambda claim: _claim_order(claim, state.scenario))
+    claims = sorted(state.claims, key=lambda claim: (
+        _claim_tier(claim.agent), *_claim_order(claim, state.scenario)
+    ))
     scores = {claim.agent: score_claim(claim, state.scenario) for claim in claims}
-    for claim in claims:
-        allocation[claim.agent] = {}
-
-    resources = sorted({resource for claim in claims for resource in claim.resources
-                        if resource in state.scenario.resources})
-    for resource in resources:
-        awards = _resource_awards(
-            claims,
-            resource,
-            state.scenario.resources.get(resource, 0),
-            scores,
-            claims,
-            state.scenario,
-        )
-        for agent, amount in awards.items():
-            if amount:
-                allocation[agent][resource] = amount
+    allocation, allocation_by_zone, unassigned_resources, by_agent_zone = _allocation_by_zone(
+        claims, state.scenario, scores
+    )
+    coverage = _coverage_by_zone(allocation_by_zone, by_agent_zone, claims, state.scenario)
+    total_critical = sum(demand_by_zone(zone).critical_patients for zone in state.scenario.zones)
+    served_critical = sum(value["critical_patients"]["people_served"]
+                          for value in coverage.values())
+    life_safety_gap = served_critical < total_critical
 
     context = _plan_reasoning_context(state, claims, allocation, scores)
     prompt = _system_prompt()
@@ -501,6 +629,10 @@ def finalize(state: NegotiationState, llm, tracer: Tracer) -> Plan:
         unresolved_shortfalls=unresolved,
         risks=[f"{claim.agent}: medical receiving support is unverified or insufficient"
                for claim in state.claims if claim.unverified_support],
+        allocation_by_zone=allocation_by_zone,
+        coverage=coverage,
+        life_safety_gap=life_safety_gap,
+        unassigned_resources=unassigned_resources,
         feasibility_report={
             "checks_passed": ["demand partitions are disjoint", "allocation capped by inventory and useful unit cap"],
             "checks_failed": ["oversubscribed demand remains"] if deficits else [],

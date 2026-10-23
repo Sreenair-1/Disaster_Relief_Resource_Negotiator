@@ -3,8 +3,7 @@ from typing import Any
 from lib.schemas import Scenario
 from tools.common import get_tool_error, normalize_scenario
 from tools.failure import check_failure
-
-GROUND_ACCESS_THRESHOLD = 0.5
+from lib.feasibility import GROUND_ACCESS_THRESHOLD, ground_route_feasible
 
 
 def hospital_capacity(
@@ -69,8 +68,7 @@ def transport_options(scenario: Scenario | dict[str, Any], zone: str | None = No
     zones = [z for z in sc.zones if target is None or z.name.casefold() == target.casefold()]
     options = [{
         "zone": z.name,
-        "ground_feasible": z.road_access >= GROUND_ACCESS_THRESHOLD
-        and sc.roads.get(z.name, "").casefold() not in {"blocked", "landslide"},
+        "ground_feasible": ground_route_feasible(z, sc),
         "ground_access": z.road_access,
         "boats_available": sc.resources.get("boats", 0),
         "boat_capacity_persons": sc.operations.boat_capacity_persons,

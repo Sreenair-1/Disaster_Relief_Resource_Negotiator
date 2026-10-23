@@ -56,6 +56,8 @@ Capacity tools report only scenario-provided values; unknown capacity remains
 null and route verification requires the planning inputs to be known.
 Claims are checked against known capacities and inventory; non-inventory asks
 are reported separately from unresolved stock shortfalls.
+Allocation follows life-safety tiers and reports agent totals, zone assignments,
+per-zone coverage, any critical-patient gap, and inventory that no zone can use.
 The Wayanad operations block is explicitly a demo assumption ledger, not local
 fleet data; IFRC early-action guidance informs urgency but provides no vehicle
 capacities or zone travel times.

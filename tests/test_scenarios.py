@@ -85,6 +85,57 @@ def test_wayanad_scenario_metrics():
     assert sc.operations.hospitals[0].icu_beds_free is None
 
 
+def test_wayanad_allocation_gives_medical_boats_and_respects_zone_routes(tracer):
+    from agents.mediator import finalize
+    path = SCENARIOS_DIR / "wayanad_monsoon_flood.json"
+    scenario = Scenario.model_validate_json(path.read_text(encoding="utf-8"))
+    state = NegotiationState(scenario=scenario, round=6, claims=[
+        Claim(agent="medical", resources={"boats": 10}, people_affected=270, urgency=10,
+              time_window_hrs=4, justification="critical patients", fallback_option="boat"),
+        Claim(agent="shelter", resources={"boats": 10}, people_affected=10000, urgency=8,
+              time_window_hrs=8, justification="stranded residents", fallback_option="boat"),
+        Claim(agent="logistics", resources={"boats": 10, "trucks": 14}, people_affected=10000,
+              urgency=7, time_window_hrs=12, justification="supply-dependent population", fallback_option="truck"),
+    ])
+    llm = StubLLM([{"justifications": {}, "conflicts_resolved": [], "disputes_log": []},
+                   {"justifications": {}, "conflicts_resolved": [], "disputes_log": []}])
+    plan = finalize(state, llm, tracer)
+    assert plan.allocation["medical"].get("boats", 0) > 0
+    assert sum(zone.get("boats", 0) for zone in plan.allocation_by_zone.values()) == sum(
+        awards.get("boats", 0) for awards in plan.allocation.values()
+    )
+    from lib.feasibility import ground_route_feasible
+    assert all(not amount or ground_route_feasible(
+                   next(z for z in scenario.zones if z.name == name), scenario)
+               for name, resources in plan.allocation_by_zone.items()
+               for resource, amount in resources.items() if resource == "trucks")
+    med_claim = next(claim for claim in state.claims if claim.agent == "medical")
+    for zone in scenario.zones:
+        trips = int(med_claim.time_window_hrs // scenario.operations.trip_hours_by_zone[zone.name])
+        expected = min(zone.critical_patients, plan.allocation_by_zone[zone.name].get("boats", 0)
+                       * scenario.operations.boat_capacity_persons * trips)
+        assert plan.coverage[zone.name]["critical_patients"]["people_served"] == expected
+    assert plan.life_safety_gap is True
+
+
+def test_resource_with_no_feasible_zone_remains_unassigned(tracer):
+    from agents.mediator import finalize
+    scenario = Scenario.model_validate({
+        "disaster_type": "flood", "zones": [
+            {"name": "Cut off", "population": 10, "road_access": 0.1}],
+        "resources": {"trucks": 2},
+        "operations": {"truck_capacity_persons": 20},
+        "roads": {"Cut off": "blocked"},
+    })
+    claim = Claim(agent="logistics", resources={"trucks": 2}, people_affected=10,
+                  urgency=5, time_window_hrs=2, justification="supply need", fallback_option="wait")
+    plan = finalize(NegotiationState(scenario=scenario, claims=[claim]),
+                    StubLLM([{"justifications": {}, "conflicts_resolved": [], "disputes_log": []},
+                             {"justifications": {}, "conflicts_resolved": [], "disputes_log": []}]), tracer)
+    assert plan.allocation["logistics"] == {}
+    assert plan.unassigned_resources == {"trucks": 2}
+
+
 # ── Tool-Failure Path Tests for MedicalAgent ─────────────────────────
 
 

@@ -144,6 +144,10 @@ class Plan(BaseModel):
     feasibility_report: dict[str, Any] = Field(default_factory=dict)
     reassessments: list[dict[str, Any]] = Field(default_factory=list)
     non_inventory_requests: list[dict[str, Any]] = Field(default_factory=list)
+    allocation_by_zone: dict[str, dict[str, int]] = Field(default_factory=dict)
+    coverage: dict[str, Any] = Field(default_factory=dict)
+    life_safety_gap: bool = False
+    unassigned_resources: dict[str, int] = Field(default_factory=dict)
 
 
 class ScenarioDiff(BaseModel):
