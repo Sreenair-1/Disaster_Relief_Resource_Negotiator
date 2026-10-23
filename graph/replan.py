@@ -71,14 +71,17 @@ def replan(state: NegotiationState, event_text: str, llm: Any, tracer: Any) -> N
     # After an event changes an oversubscribed negotiation, ask one affected
     # claimant to respond to the new conditions before reallocating.
     deficits = over_subscribed(updated.claims, updated.scenario)
-    if deficits and updated.round < 6:
+    if deficits and updated.round < 3:
         missing, uncertain = [], []
         target = _counter_target(updated, deficits, missing, uncertain)
         question = _counter_question(target, MediatorAction.challenge_agent, deficits)
         counter = Counter(to_agent=target, question=question, issued_round=updated.round,
+                          counter_id=len(updated.counters) + 1,
                           claim_snapshot=existing.get(target).model_copy(deep=True)
                           if existing.get(target) else None)
         updated.counters.append(counter)
+        updated.round_challenged_agents = [target]
+        updated.round_responded_agents = []
         previous = existing.get(target)
         prior_deficits = over_subscribed(updated.claims, updated.scenario)
         revised = CLAIMERS[target](updated, llm, tracer, counter)
@@ -113,10 +116,11 @@ def replan(state: NegotiationState, event_text: str, llm: Any, tracer: Any) -> N
         reduced_oversubscription = any(new_deficits.get(key, 0) < amount
                                        for key, amount in prior_deficits.items())
         meaningful = reduced_oversubscription or evidence
-        record = ClaimRevision(agent=target, round=updated.round + 1,
+        record = ClaimRevision(agent=target, round=updated.round,
                                previous_claim=previous, current_claim=revised,
                                changes=changes, defended_unchanged=not meaningful,
-                               has_evidence=evidence, meaningful_revision=meaningful)
+                               has_evidence=evidence, meaningful_revision=meaningful,
+                               counter_id=counter.counter_id)
         updated.claim_revisions.append(record)
         tracer.log(target, "mediator", "claim_revision", {
             "agent": target, "changes": changes,
@@ -126,8 +130,12 @@ def replan(state: NegotiationState, event_text: str, llm: Any, tracer: Any) -> N
             "revision_round": record.round,
             "has_evidence": record.has_evidence,
             "meaningful_revision": record.meaningful_revision,
+            "counter_id": record.counter_id,
         })
+        updated.round_responded_agents = [target]
         updated.round += 1
+        updated.round_challenged_agents = []
+        updated.round_responded_agents = []
 
     updated.plan = mediator_finalize(updated, llm, tracer)
     before_awards = before_plan.allocation if before_plan else {}

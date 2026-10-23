@@ -1,6 +1,6 @@
 from agents.mediator import decide_next, finalize
 from lib.llm import StubLLM
-from lib.schemas import Claim, MediatorAction, NegotiationState, Plan
+from lib.schemas import Claim, ClaimRevision, MediatorAction, NegotiationState, Plan
 
 
 class MemoryTracer:
@@ -39,7 +39,9 @@ def _complete_reasoning(state):
 
 def test_decision_varies_with_state_and_emits_counter(sample_scenario):
     tracer = MemoryTracer()
-    first, second = _state(sample_scenario), _state(sample_scenario, round=2)
+    first = _state(sample_scenario.model_copy(deep=True))
+    second = _state(sample_scenario.model_copy(deep=True), round=2)
+    first.scenario.resources["boats"] = 3
     second.scenario.resources["boats"] = 5
     llm = StubLLM([
         {"action": "challenge_agent", "to_agent": "medical", "question": "Justify two boats.", "reasoning": "Uncertain."},
@@ -53,17 +55,18 @@ def test_decision_varies_with_state_and_emits_counter(sample_scenario):
     assert [event["type"] for event in tracer.events].count("decision") == 2
 
 
-def test_round_six_forces_finalize_without_llm(sample_scenario):
+def test_round_three_forces_finalize_without_llm(sample_scenario):
     tracer = MemoryTracer()
-    state = _state(sample_scenario, round=6)
+    state = _state(sample_scenario, round=3)
     assert decide_next(state, StubLLM(), tracer) == MediatorAction.finalize
-    assert tracer.events[-1]["payload"]["round"] == 6
+    assert tracer.events[-1]["payload"]["round"] == 3
+    assert tracer.events[-1]["payload"]["reasoning_source"] == "fallback"
 
 
 def test_peer_estimate_decision_emits_targeted_counter(sample_scenario):
     tracer = MemoryTracer()
     state = _state(sample_scenario)
-    state.scenario.resources["boats"] = 5
+    state.scenario.resources["boats"] = 3
     llm = StubLLM([{
         "action": "ask_peer_estimate", "to_agent": "logistics",
         "question": "Estimate access to Zone B.", "reasoning": "Medical telemetry is uncertain.",
@@ -72,6 +75,17 @@ def test_peer_estimate_decision_emits_targeted_counter(sample_scenario):
     assert decide_next(state, llm, tracer) == MediatorAction.ask_peer_estimate
     assert state.counters[-1].to_agent == "logistics"
     assert state.counters[-1].question == "Estimate access to Zone B."
+
+
+def test_decision_preserves_llm_reasoning_source_when_fitting(sample_scenario):
+    state = _state(sample_scenario)
+    state.scenario.resources["boats"] = 5
+    tracer = MemoryTracer()
+    llm = StubLLM([{"action": "challenge_agent", "to_agent": "medical",
+                    "question": "irrelevant", "reasoning": "Validated requests fit inventory."}])
+    assert decide_next(state, llm, tracer) == MediatorAction.finalize
+    assert tracer.events[-1]["payload"]["reasoning"] == "Validated requests fit inventory."
+    assert tracer.events[-1]["payload"]["reasoning_source"] == "llm"
 
 
 def test_finalize_caps_inventory_and_seed_split(sample_scenario):
@@ -92,6 +106,9 @@ def test_finalize_caps_inventory_and_seed_split(sample_scenario):
     assert plan.rounds_used == 2
     assert plan.justifications["medical"]
     assert plan.disputes_log
+    assert plan.conflicts_resolved == []
+    assert plan.unresolved_shortfalls
+    assert all("Round cap reached" not in text for text in plan.conflicts_resolved)
     assert tracer.events[-1]["type"] == "plan"
 
 
@@ -264,6 +281,21 @@ def test_non_inventory_requests_are_reported_outside_shortfalls(sample_scenario)
     plan = finalize(state, llm, MemoryTracer())
     assert {item["resource"] for item in plan.non_inventory_requests} == {"food_rations"}
     assert all(item.resource != "food_rations" for item in plan.unresolved_shortfalls)
+
+
+def test_only_a_resolved_prior_deficit_appears_in_conflicts_resolved(sample_scenario):
+    medical = _claim("medical", {"boats": 1}, 12, 10, 2, uncertainty=0)
+    shelter = _claim("shelter", {"boats": 1}, 300, 8, 6, uncertainty=0)
+    state = NegotiationState(scenario=sample_scenario, claims=[medical, shelter],
+        claim_revisions=[ClaimRevision(
+            agent="medical", round=2,
+            previous_claim=_claim("medical", {"boats": 3}, 12, 10, 2, uncertainty=0),
+            current_claim=medical, changes={"resources": {"before": {"boats": 3}, "after": {"boats": 1}}},
+            has_evidence=True, meaningful_revision=True,
+        )])
+    plan = finalize(state, StubLLM([_complete_reasoning(state)]), MemoryTracer())
+    assert plan.conflicts_resolved == ["boats oversubscription was resolved after claim evidence changed."]
+    assert not plan.unresolved_shortfalls
 
 
 def score_claim_for_test(claim, state):

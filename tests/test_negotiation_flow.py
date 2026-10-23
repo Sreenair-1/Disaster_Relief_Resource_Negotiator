@@ -5,7 +5,7 @@ import pytest
 from agents.mediator import decide_next
 from lib.llm import StubLLM
 from lib.schemas import (
-    Claim, Counter, Estimate, MediatorAction,
+    Claim, ClaimRevision, Counter, Estimate, MediatorAction,
     NegotiationState, Plan, Scenario, Zone,
 )
 
@@ -68,7 +68,11 @@ def test_oversubscription_challenge_revised_claim_stored(monkeypatch):
 
     tracer = MemoryTracer()
     state = _oversubscribed_state()
-    state.claims[0].resources["boats"] = 0
+    state.counters.append(Counter(to_agent="medical", question="Defend request", issued_round=0))
+    state.claim_revisions.append(ClaimRevision(
+        agent="medical", round=1, previous_claim=state.claims[0],
+        current_claim=state.claims[0], defended_unchanged=True, has_evidence=True,
+    ))
 
     # LLM returns challenge_agent targeting shelter
     llm = StubLLM([
@@ -175,7 +179,7 @@ def test_round_cap_forces_finalize():
     """At round 3, decide_next forces finalize without calling the LLM."""
     tracer = MemoryTracer()
     state = _oversubscribed_state()
-    state.round = 6
+    state.round = 3
 
     # No LLM responses needed — the round cap should force finalize
     llm = StubLLM([])
@@ -184,7 +188,8 @@ def test_round_cap_forces_finalize():
     assert action == MediatorAction.finalize
 
     decision_event = next(e for e in tracer.events if e["type"] == "decision")
-    assert decision_event["payload"]["reasoning"] == "Round cap reached."
+    assert decision_event["payload"]["reasoning_source"] == "fallback"
+    assert "Safety cap" in decision_event["payload"]["reasoning"]
 
 
 # ── Action path differs: oversubscribed vs. non-oversubscribed ───────
@@ -257,6 +262,34 @@ def test_challenge_produces_claim_revision_trace(monkeypatch):
     assert "resources" in rev["payload"]["changes"]
     assert rev["payload"]["changes"]["resources"]["before"] == {"boats": 2}
     assert rev["payload"]["changes"]["resources"]["after"] == {"boats": 1}
+
+
+def test_round_advances_after_all_challenged_agents_respond(monkeypatch):
+    import graph.negotiation as graph
+
+    state = _oversubscribed_state()
+    state.round = 1
+    state.round_challenged_agents = ["medical", "shelter"]
+    state.counters = [
+        Counter(to_agent="medical", question="Respond", issued_round=1, counter_id=1),
+        Counter(to_agent="shelter", question="Respond", issued_round=1, counter_id=2),
+    ]
+    responses = {
+        "medical": lambda *args, **kwargs: _claim("medical", boats=1),
+        "shelter": lambda *args, **kwargs: _claim("shelter", boats=1),
+    }
+    monkeypatch.setattr(graph, "CLAIMERS", responses)
+    ctx = {"state": state, "llm": StubLLM([]), "tracer": MemoryTracer(),
+           "action": MediatorAction.challenge_agent, "next_agent": "medical"}
+
+    first = graph._challenge(ctx)["state"]
+    assert first.round == 1
+    assert first.round_responded_agents == ["medical"]
+
+    second = graph._challenge({**ctx, "state": first, "next_agent": "shelter"})["state"]
+    assert second.round == 2
+    assert second.round_responded_agents == []
+    assert second.round_challenged_agents == []
 
 
 def test_urgency_only_change_is_not_a_meaningful_revision(monkeypatch):

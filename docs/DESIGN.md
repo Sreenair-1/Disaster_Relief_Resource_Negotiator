@@ -107,7 +107,10 @@ prioritizing early evacuation and at-risk people but supplies no capacities.
 Medical, Shelter, and Logistics, asks Mediator for the next
 `MediatorAction`, and routes `challenge_agent` to a revision or
 `request_fallback` / `ask_peer_estimate` to an estimate. The graph finalizes
-when Mediator selects `finalize` or the six-round safety cap is reached.
+when Mediator selects `finalize` or the three-round safety cap is reached.
+One round is a full challenge cycle: every challenged agent must respond
+before `round` advances once. It advances once per completed cycle, not once
+per counter, and the hard cap remains three rounds.
 
 **Estimate feedback loop.** Estimates returned by agents during
 `request_fallback` / `ask_peer_estimate` are stored in
@@ -123,7 +126,7 @@ estimate informs the next decision or challenge rather than ending at the trace.
    claimants respond, or when total requests fit inventory.
 2. Use `request_fallback` / `ask_peer_estimate` only for uncertain claims or
    failed tools.
-3. The six-round cap is a safety net. At the cap, finalize with
+3. The three-round cap is a safety net. At the cap, finalize with
    `status="constrained"` and explicit `unresolved_shortfalls` (resource, unmet
    amount, claimants), rather than implying unresolved demand was settled.
 
@@ -210,8 +213,11 @@ sets `life_safety_gap` if any critical patients remain uncovered.
 Final allocation reasoning must give each claimant a non-empty explanation with
 its score, rank, requested and awarded amounts, shortfall, and comparison with
 competing claims. The Mediator validates the numeric citations and priority
-language, retries once with listed contradictions, then uses deterministic
-data-based explanations if the repair is still inconsistent or fails. `Plan`
+language, life-safety tier, and critical-patient gap, retries once with listed
+contradictions, then uses deterministic data-based explanations if the repair
+is still inconsistent or fails. Decision events preserve the LLM's reasoning;
+when unavailable, the safety fallback is explicitly traced with
+`reasoning_source="fallback"`. `Plan`
 also carries `feasibility_report` with checks, unresolved shortfalls, unknown
 assumptions, and de-duplicated demand totals. It records each claim once in
 `disputes_log`: actual claim changes are

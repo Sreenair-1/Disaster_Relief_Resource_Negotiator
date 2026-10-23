@@ -68,8 +68,11 @@ explicitly assumed for a software demo, not verified local data:
 - Claims that state a known boat capacity or round-trip time inconsistent with
   `operations` are corrected to the scenario value and traced; no new factual
   capacity is inferred from claim prose.
-- The six-round negotiation cap is a workflow safety setting, not an empirically
+- The three-round negotiation cap is a workflow safety setting, not an empirically
   derived response limit.
+- One round is one complete cycle in which every challenged agent responds.
+  `round` increments once when that cycle is complete, rather than once for
+  each individual challenge; the hard cap is three.
 
 ## Follow-up commit 3: claim validation
 
@@ -88,3 +91,11 @@ explicitly assumed for a software demo, not verified local data:
 - Coverage counts are capped at each tier's demand. No additional capacity is
   inferred when operations fields are unknown; such units cannot be assigned
   as feasible boats or trucks.
+
+## Follow-up commit 5: honest mediator output
+
+- Conflict-resolution statements are emitted only for a resource deficit that
+  existed in earlier claim snapshots and is absent in the final validated
+  requests. Remaining deficits belong in `unresolved_shortfalls`.
+- The mediator's configured three-round cap is a workflow safety setting; its
+  number is recorded under follow-up commit 2 above.

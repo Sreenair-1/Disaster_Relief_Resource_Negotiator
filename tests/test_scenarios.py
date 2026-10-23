@@ -89,7 +89,7 @@ def test_wayanad_allocation_gives_medical_boats_and_respects_zone_routes(tracer)
     from agents.mediator import finalize
     path = SCENARIOS_DIR / "wayanad_monsoon_flood.json"
     scenario = Scenario.model_validate_json(path.read_text(encoding="utf-8"))
-    state = NegotiationState(scenario=scenario, round=6, claims=[
+    state = NegotiationState(scenario=scenario, round=3, claims=[
         Claim(agent="medical", resources={"boats": 10}, people_affected=270, urgency=10,
               time_window_hrs=4, justification="critical patients", fallback_option="boat"),
         Claim(agent="shelter", resources={"boats": 10}, people_affected=10000, urgency=8,

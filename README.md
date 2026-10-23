@@ -45,8 +45,10 @@ Inject an event after a successful first run to see the before/after allocation
 comparison and the reasons for updated awards.
 
 When requests exceed stock, the Mediator records each claimant's response to a
-counter before early finalization. If the six-round safety cap is reached,
+counter before early finalization. If the three-round safety cap is reached,
 the plan is marked `constrained` and reports unresolved resource shortfalls.
+One round means all challenged agents have responded; the round count advances
+once for the complete cycle, not once per challenge, with a hard cap of three.
 Allocation ranks severity-weighted, time-sensitive claims, respects known
 feasibility caps, and splits stock proportionally only within tied priority
 tiers. Severity weights are documented model assumptions.
@@ -58,6 +60,8 @@ Claims are checked against known capacities and inventory; non-inventory asks
 are reported separately from unresolved stock shortfalls.
 Allocation follows life-safety tiers and reports agent totals, zone assignments,
 per-zone coverage, any critical-patient gap, and inventory that no zone can use.
+Resolved conflicts list only deficits eliminated by validated claim changes;
+remaining stock gaps appear separately as shortfalls.
 The Wayanad operations block is explicitly a demo assumption ledger, not local
 fleet data; IFRC early-action guidance informs urgency but provides no vehicle
 capacities or zone travel times.

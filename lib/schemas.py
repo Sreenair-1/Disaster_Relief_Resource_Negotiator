@@ -96,6 +96,7 @@ class Counter(BaseModel):
     question: str
     issued_round: int = Field(default=0, ge=0)
     claim_snapshot: Claim | None = None
+    counter_id: int = Field(default=0, ge=0)
 
 
 class ClaimRevision(BaseModel):
@@ -107,6 +108,7 @@ class ClaimRevision(BaseModel):
     defended_unchanged: bool = False
     has_evidence: bool = False
     meaningful_revision: bool = False
+    counter_id: int | None = None
 
 
 class Estimate(BaseModel):
@@ -148,6 +150,7 @@ class Plan(BaseModel):
     coverage: dict[str, Any] = Field(default_factory=dict)
     life_safety_gap: bool = False
     unassigned_resources: dict[str, int] = Field(default_factory=dict)
+    reasoning_source: str = "llm"
 
 
 class ScenarioDiff(BaseModel):
@@ -175,3 +178,5 @@ class NegotiationState(BaseModel):
     affected_agents: list[str] = Field(default_factory=list)
     claim_revisions: list[ClaimRevision] = Field(default_factory=list)
     non_inventory_requests: list[dict[str, Any]] = Field(default_factory=list)
+    round_challenged_agents: list[str] = Field(default_factory=list)
+    round_responded_agents: list[str] = Field(default_factory=list)

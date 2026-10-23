@@ -66,6 +66,13 @@ def _collect_claims(ctx: _GraphState) -> _GraphState:
 def _mediate(ctx: _GraphState) -> _GraphState:
     state = ctx["state"]
     action = decide_next(state, ctx["llm"], ctx["tracer"])
+    # Do not repeat an estimate request for an agent whose estimate is already
+    # in state; otherwise a model that keeps asking can cycle without a round.
+    if (action in (MediatorAction.request_fallback, MediatorAction.ask_peer_estimate)
+            and state.counters and any(
+                estimate.agent == state.counters[-1].to_agent for estimate in state.estimates
+            )):
+        action = MediatorAction.finalize
     uncertain = [claim for claim in state.claims if claim.uncertainty is None or claim.uncertainty > 0]
     if action == MediatorAction.accept_revision and uncertain and state.round < 3:
         action = MediatorAction.ask_peer_estimate
@@ -105,6 +112,7 @@ def _challenge(ctx: _GraphState) -> _GraphState:
         old_claim = state.claims[index] if index is not None else None
         old_deficits = over_subscribed(state.claims, state.scenario)
         revision = CLAIMERS[agent](state, ctx["llm"], ctx["tracer"], _counter_for(state, agent))
+        counter = _counter_for(state, agent)
         original_revision = revision
         revision, corrections = validate_claim_facts(revision, state.scenario)
         if corrections:
@@ -143,13 +151,14 @@ def _challenge(ctx: _GraphState) -> _GraphState:
         defended_unchanged = not meaningful
         revision_record = ClaimRevision(
             agent=agent,
-            round=state.round + 1,
+            round=state.round,
             previous_claim=old_claim,
             current_claim=revision.model_copy(deep=True),
             changes=changes,
             defended_unchanged=defended_unchanged,
             has_evidence=has_evidence,
             meaningful_revision=meaningful,
+            counter_id=counter.counter_id if counter else None,
         )
         state.claim_revisions.append(revision_record)
         ctx["tracer"].log(agent, "mediator", "claim_revision", {
@@ -161,8 +170,15 @@ def _challenge(ctx: _GraphState) -> _GraphState:
             "revision_round": revision_record.round,
             "has_evidence": revision_record.has_evidence,
             "meaningful_revision": revision_record.meaningful_revision,
+            "counter_id": revision_record.counter_id,
         })
-    state.round += 1
+        if agent not in state.round_responded_agents:
+            state.round_responded_agents.append(agent)
+        if (state.round_challenged_agents and
+                set(state.round_challenged_agents) <= set(state.round_responded_agents)):
+            state.round += 1
+            state.round_challenged_agents = []
+            state.round_responded_agents = []
     return {**ctx, "state": state, "action": None}
 
 
@@ -174,7 +190,6 @@ def _fallback(ctx: _GraphState) -> _GraphState:
         estimate = ESTIMATORS[target](state, counter.question, ctx["llm"], ctx["tracer"])
         state.estimates.append(estimate)
         ctx["tracer"].log("mediator", target, "fallback_estimate", estimate.model_dump())
-    state.round += 1
     return {**ctx, "state": state, "action": None}
 
 
@@ -185,7 +200,7 @@ def _finish(ctx: _GraphState) -> _GraphState:
 
 
 def _route(ctx: _GraphState) -> str:
-    if ctx["state"].round >= 6 or ctx["action"] == MediatorAction.finalize:
+    if ctx["state"].round >= 3 or ctx["action"] == MediatorAction.finalize:
         return "finalize"
     if ctx["action"] == MediatorAction.challenge_agent:
         return "challenge"

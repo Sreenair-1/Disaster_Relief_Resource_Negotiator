@@ -13,13 +13,24 @@ def test_graph_routes_challenge_and_stops_at_round_cap(monkeypatch, tracer):
 
     monkeypatch.setattr(graph, "CLAIMERS", {a: (lambda s, l, t, counter=None, a=a: _claim(a))
                                               for a in ("medical", "shelter", "logistics")})
-    actions = iter([MediatorAction.challenge_agent, MediatorAction.challenge_agent,
-                    MediatorAction.finalize])
-    monkeypatch.setattr(graph, "decide_next", lambda *args: next(actions))
+    calls = 0
+    def challenge_once_per_cycle(state, llm, tracer):
+        nonlocal calls
+        calls += 1
+        if state.round >= 3:
+            return MediatorAction.finalize
+        state.round_challenged_agents = ["medical"]
+        state.counters.append(Counter(to_agent="medical", question="Respond",
+                                      issued_round=state.round,
+                                      counter_id=len(state.counters) + 1))
+        return MediatorAction.challenge_agent
+
+    monkeypatch.setattr(graph, "decide_next", challenge_once_per_cycle)
     monkeypatch.setattr(graph, "mediator_finalize", lambda state, llm, tracer: Plan(rounds_used=state.round))
     scenario = Scenario(disaster_type="flood", zones=[Zone(name="A", population=1)])
     state = graph.run_negotiation(scenario, StubLLM(), tracer)
     assert state.round == 3
+    assert calls == 3
     assert state.plan is not None
 
 

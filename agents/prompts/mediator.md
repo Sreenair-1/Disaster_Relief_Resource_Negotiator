@@ -21,11 +21,12 @@ ask_peer_estimate, accept_revision, finalize.
    acknowledge the revision and re-evaluate.
 
 4. **Nothing oversubscribed, or claims stopped changing**: choose `finalize`.
-   Do not wait until round 6 if the evidence is adequate and demand fits
+   Do not wait until round 3 if the evidence is adequate and demand fits
    inventory. Finalizing early is preferable to unnecessary rounds.
 
-The hard cap at round 6 is a safety net only. The caller forces finalize at
-round 6 if you have not already chosen it.
+The hard cap at round 3 is a safety net only. A round is one complete cycle
+in which every challenged agent responds. The caller increments round once
+after the full cycle, not once per challenge, and forces finalize at round 3.
 
 ## Context provided
 

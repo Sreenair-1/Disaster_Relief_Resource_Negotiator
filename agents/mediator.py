@@ -58,7 +58,10 @@ def _latest_counter_response(state: NegotiationState, agent: str):
     if counter is None:
         return None
     return next((revision for revision in reversed(state.claim_revisions)
-                 if revision.agent == agent and revision.round > counter.issued_round), None)
+                 if revision.agent == agent and (
+                     revision.counter_id == counter.counter_id if counter.counter_id
+                     else revision.round > counter.issued_round
+                 )), None)
 
 
 def _unresolved_conflict_agents(state, deficits, revised, defended):
@@ -71,7 +74,7 @@ def _unresolved_conflict_agents(state, deficits, revised, defended):
 
 
 def decide_next(state: NegotiationState, llm, tracer: Tracer) -> MediatorAction:
-    """Choose an action from evidence; finalize at the configured six-round cap."""
+    """Choose an action from evidence; round counts complete response cycles."""
     deficits = over_subscribed(state.claims, state.scenario)
     scores = {
         claim.agent: round(score_claim(claim, state.scenario), 3)
@@ -95,7 +98,7 @@ def decide_next(state: NegotiationState, llm, tracer: Tracer) -> MediatorAction:
 
     context = {
         "round": state.round,
-        "round_cap": 6,
+        "round_cap": 3,
         "claims": [claim.model_dump() for claim in state.claims],
         "scores": scores,
         "over_subscription": deficits,
@@ -109,9 +112,8 @@ def decide_next(state: NegotiationState, llm, tracer: Tracer) -> MediatorAction:
         "agents_not_yet_responded": unresolved_agents,
     }
 
-    if state.round >= 6:
-        decision = _Decision(action=MediatorAction.finalize, reasoning="Round cap reached.")
-    else:
+    llm_reasoning = True
+    try:
         decision = llm.complete_json(
             _system_prompt(),
             "Choose the next action based on this negotiation state. Return JSON with "
@@ -120,18 +122,46 @@ def decide_next(state: NegotiationState, llm, tracer: Tracer) -> MediatorAction:
             "Include concise reasoning.\n" + json.dumps(context),
             _Decision,
         )
+    except Exception:
+        llm_reasoning = False
+        decision = _Decision(action=MediatorAction.finalize if state.round >= 3
+                             else MediatorAction.challenge_agent)
+
+    if state.round >= 3 or (not deficits and decision.action not in {
+        MediatorAction.request_fallback, MediatorAction.ask_peer_estimate,
+    }):
+        decision.action = MediatorAction.finalize
 
     # Every oversubscribed claimant must revise or defend with evidence before
     # an early final decision can be accepted.
-    forced_conflict_challenge = bool(deficits and unresolved_agents and state.round < 6)
+    forced_conflict_challenge = bool(
+        deficits and unresolved_agents and state.round < 3
+        and decision.action in {MediatorAction.finalize, MediatorAction.accept_revision}
+    )
     if forced_conflict_challenge:
         target = unresolved_agents[0]
         decision = _Decision(
             action=MediatorAction.challenge_agent,
             to_agent=target,
             question=_counter_question(target, MediatorAction.challenge_agent, deficits),
-            reasoning="Awaiting this oversubscribed claimant's revision or evidence.",
         )
+    if state.round_challenged_agents and unresolved_agents and state.round < 3:
+        target = unresolved_agents[0]
+        decision = _Decision(
+            action=MediatorAction.challenge_agent,
+            to_agent=target,
+            question=_counter_question(target, MediatorAction.challenge_agent, deficits),
+            reasoning="Completing the current challenge cycle for every unresolved claimant.",
+        )
+    if not decision.reasoning.strip():
+        decision.reasoning = (
+            "Finalized because validated demand fits inventory."
+            if not deficits else
+            "Safety fallback selected the required conflict response."
+            if unresolved_agents and state.round < 3 else
+            "Safety cap requires a constrained final plan."
+        )
+        llm_reasoning = False
 
     counter = None
     if decision.action in {
@@ -143,17 +173,24 @@ def decide_next(state: NegotiationState, llm, tracer: Tracer) -> MediatorAction:
         question = decision.question or _counter_question(agent, decision.action, deficits)
         snapshot = next((claim.model_copy(deep=True) for claim in state.claims
                          if claim.agent == agent), None)
+        if decision.action == MediatorAction.challenge_agent:
+            if not state.round_challenged_agents:
+                state.round_challenged_agents = list(unresolved_agents or [agent])
+            if agent not in state.round_challenged_agents:
+                state.round_challenged_agents.append(agent)
         counter = Counter(
             to_agent=agent,
             question=question,
             issued_round=state.round,
             claim_snapshot=snapshot,
+            counter_id=len(state.counters) + 1,
         )
         state.counters.append(counter)
 
     tracer.log("mediator", "agents", "decision", {
         "action": decision.action.value,
         "reasoning": decision.reasoning,
+        "reasoning_source": "llm" if llm_reasoning else "fallback",
         "counter": counter.model_dump() if counter else None,
         "round": state.round,
         "scores": scores,
@@ -441,7 +478,7 @@ def _resource_text(resources):
     return ", ".join(f"{name}={amount}" for name, amount in sorted(resources.items()))
 
 
-def _plan_reasoning_context(state, claims, allocation, scores):
+def _plan_reasoning_context(state, claims, allocation, scores, life_safety_gap):
     rank = {claim.agent: index for index, claim in enumerate(claims, start=1)}
     requested = {claim.agent: claim.resources for claim in claims}
     awarded = {
@@ -470,6 +507,8 @@ def _plan_reasoning_context(state, claims, allocation, scores):
         "claims": [claim.model_dump() for claim in state.claims],
         "scores": {agent: round(score, 3) for agent, score in scores.items()},
         "rank": rank,
+        "priority_tiers": {claim.agent: _claim_tier(claim.agent) for claim in claims},
+        "life_safety_gap": life_safety_gap,
         "requested": requested,
         "awarded": awarded,
         "shortfalls": shortfalls,
@@ -479,7 +518,8 @@ def _plan_reasoning_context(state, claims, allocation, scores):
     }
 
 
-def _deterministic_justification(claim, allocation, scores, rank, competitors):
+def _deterministic_justification(claim, allocation, scores, rank, competitors,
+                                 life_safety_gap=False):
     requested = claim.resources
     awarded = {
         resource: allocation.get(claim.agent, {}).get(resource, 0)
@@ -492,15 +532,20 @@ def _deterministic_justification(claim, allocation, scores, rank, competitors):
     competitor_text = "; ".join(
         f"{agent} (score {score:.3f})" for agent, score in competitors
     ) or "no other claims"
+    tier = _claim_tier(claim.agent)
+    tier_note = f"Priority tier {tier}. " if tier > 1 else "Priority tier 1. "
+    gap_note = "life_safety_gap: critical patient coverage remains incomplete. " if life_safety_gap else ""
     return (
         f"Score {scores[claim.agent]:.3f}; rank {rank}. "
+        f"{tier_note}{gap_note}"
         f"Requested {_resource_text(requested)}; awarded {_resource_text(awarded)}; "
         f"shortfall {_resource_text(shortfalls)}. Trade-off: this award balances "
         f"{claim.agent}'s need against competing claims from {competitor_text}."
     )
 
 
-def _justification_contradictions(reasoning, claims, allocation, scores):
+def _justification_contradictions(reasoning, claims, allocation, scores,
+                                  life_safety_gap=False):
     ranks = {claim.agent: index for index, claim in enumerate(claims, start=1)}
     problems = []
     for claim in claims:
@@ -521,6 +566,12 @@ def _justification_contradictions(reasoning, claims, allocation, scores):
                 problems.append(f"{claim.agent}: awarded {resource} citation mismatch")
         if ranks[claim.agent] > 1 and re.search(r"highest\s+priority|top\s+priority", note, re.I):
             problems.append(f"{claim.agent}: lower-ranked claim described as highest priority")
+        if _claim_tier(claim.agent) > 1 and not re.search(
+            rf"priority\s+tier\s*{_claim_tier(claim.agent)}|higher[- ]priority tier|lower tier", note, re.I
+        ):
+            problems.append(f"{claim.agent}: missing its lower life-safety tier")
+        if life_safety_gap and not re.search(r"life_safety_gap|critical patient coverage", note, re.I):
+            problems.append(f"{claim.agent}: omitted the critical-patient coverage gap")
     return problems
 
 
@@ -540,18 +591,28 @@ def finalize(state: NegotiationState, llm, tracer: Tracer) -> Plan:
                           for value in coverage.values())
     life_safety_gap = served_critical < total_critical
 
-    context = _plan_reasoning_context(state, claims, allocation, scores)
+    context = _plan_reasoning_context(state, claims, allocation, scores, life_safety_gap)
     prompt = _system_prompt()
     user = (
         "Explain this fixed allocation. Return one non-empty justification for every "
-        "agent in allocation. Each must cite its numeric score, rank, requested and "
-        "awarded amounts, shortfall, and the trade-off against competing claims. "
+        "agent in allocation. Each must cite its numeric score, rank, priority tier, requested and "
+        "awarded amounts, shortfall, and trade-off against competing claims. Explicitly state "
+        "the life_safety_gap and critical-patient coverage issue when true. "
         "Record resolved conflicts and unmet requests. Do not change the allocation.\n"
         + json.dumps(context)
     )
-    reasoning = llm.complete_json(prompt, user, _PlanReasoning)
+    reasoning_source = "llm"
+    try:
+        reasoning = llm.complete_json(prompt, user, _PlanReasoning)
+    except Exception:
+        reasoning = _PlanReasoning()
+        reasoning_source = "fallback"
     missing = _missing_justifications(reasoning, allocation)
-    contradictions = _justification_contradictions(reasoning, claims, allocation, scores)
+    contradictions = _justification_contradictions(
+        reasoning, claims, allocation, scores, life_safety_gap
+    )
+    if contradictions or _missing_justifications(reasoning, allocation):
+        reasoning_source = "fallback"
     if missing or contradictions:
         retry_user = (
             "Retry the allocation explanation. Missing/empty entries: "
@@ -563,9 +624,10 @@ def finalize(state: NegotiationState, llm, tracer: Tracer) -> Plan:
         )
         try:
             reasoning = llm.complete_json(prompt, retry_user, _PlanReasoning)
+            reasoning_source = "llm"
         except Exception:
             # The deterministic report remains usable if the repair call fails.
-            pass
+            reasoning_source = "fallback"
 
     ranks = {claim.agent: index for index, claim in enumerate(claims, start=1)}
     competitors = {
@@ -575,46 +637,34 @@ def finalize(state: NegotiationState, llm, tracer: Tracer) -> Plan:
         ]
         for claim in claims
     }
-    contradictions = _justification_contradictions(reasoning, claims, allocation, scores)
+    contradictions = _justification_contradictions(
+        reasoning, claims, allocation, scores, life_safety_gap
+    )
     justifications = {}
     for claim in claims:
         note = reasoning.justifications.get(claim.agent, "").strip()
         if "allocated according to deterministic priority and available inventory" in note.casefold():
             note = ""
         detail = _deterministic_justification(
-            claim, allocation, scores, ranks[claim.agent], competitors[claim.agent]
+            claim, allocation, scores, ranks[claim.agent], competitors[claim.agent],
+            life_safety_gap,
         )
         valid_note = note if not contradictions and claim.agent not in _missing_justifications(reasoning, allocation) else ""
         justifications[claim.agent] = f"{valid_note} {detail}".strip()
 
     deficits = over_subscribed(state.claims, state.scenario)
-    unresolved = _unresolved_shortfalls(state, allocation) if state.round >= 6 else []
-    unresolved_agents = _unresolved_conflict_agents(
-        state,
-        deficits,
-        _agents_revised_since_last_counter(state),
-        _agents_defended_unchanged_since_last_counter(state),
-    )
-    status = "constrained" if deficits or unresolved else "resolved"
-    if deficits:
-        if state.round >= 6:
-            conflicts = [
-                f"Round cap reached with {item.unmet_amount} {item.resource} unmet; "
-                f"unresolved claimants: {', '.join(item.agents)}."
-                for item in unresolved
-            ]
-        elif unresolved_agents:
-            conflicts = [
-                "Oversubscribed claims remain unaddressed; finalizing now would leave "
-                "unresolved shortfalls."
-            ]
-        else:
-            conflicts = [
-                "Claimants revised or defended their requests; inventory still cannot "
-                "meet all demand."
-            ]
-    else:
-        conflicts = list(reasoning.conflicts_resolved)
+    unresolved = _unresolved_shortfalls(state, allocation) if deficits else []
+    prior_claims = {claim.agent: claim for claim in state.claims}
+    for revision in reversed(state.claim_revisions):
+        if revision.previous_claim is not None:
+            prior_claims[revision.agent] = revision.previous_claim
+    prior_deficits = over_subscribed(list(prior_claims.values()), state.scenario)
+    conflicts = [
+        f"{resource} oversubscription was resolved after claim evidence changed."
+        for resource in sorted(prior_deficits)
+        if resource not in deficits
+    ]
+    status = "constrained" if deficits or life_safety_gap else "resolved"
 
     disputes = _disputes_for_allocation(state, claims, allocation)
 
@@ -652,6 +702,7 @@ def finalize(state: NegotiationState, llm, tracer: Tracer) -> Plan:
               for claim in state.claims for resource, amount in claim.resources.items()
               if resource not in state.scenario.resources),
         ],
+        reasoning_source=reasoning_source,
     )
     tracer.log("mediator", "system", "plan", plan.model_dump())
     return plan
